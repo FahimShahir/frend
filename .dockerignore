@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+data/.wwebjs_auth
+data/*.db*
+scratch
+.git
+.github
+.env

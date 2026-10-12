@@ -1,0 +1,9 @@
+node_modules/
+.env
+credentials.json
+data/*
+!data/.gitkeep
+scratch/
+npm-debug.log*
+.DS_Store
+*.log
