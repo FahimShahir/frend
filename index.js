@@ -78,13 +78,10 @@ const client = new Client({
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
-      '--no-zygote',
-      '--single-process',
       '--disable-gpu',
       '--disable-software-rasterizer',
       '--disable-extensions',
       '--disable-blink-features=AutomationControlled',
-      '--js-flags=--max-old-space-size=512',
       `--user-agent=${DESKTOP_USER_AGENT}`,
     ],
     timeout: 60000,
@@ -973,8 +970,9 @@ const shutdownGracefully = async (signal) => {
   process.exit(0);
 };
 
-// ─── Safe Client Initializer (Prevents multiple calls & detached frame errors) ─
+// ─── Safe Client Initializer (Auto-retry & Detached Frame Recovery) ─────
 let isInitializing = false;
+let initRetryCount = 0;
 async function safeInitialize() {
   if (isInitializing) {
     console.log('⏳ ক্লায়েন্ট ইতিমধ্যে চালু হওয়ার প্রক্রিয়ায় আছে...');
@@ -982,9 +980,30 @@ async function safeInitialize() {
   }
   isInitializing = true;
   try {
+    // Clean up any stale Chromium devtools/lock files that cause frame detachment
+    try {
+      const lockFiles = ['DevToolsActivePort', 'SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+      const sessionDir = path.join(__dirname, 'data', '.wwebjs_auth', 'session');
+      for (const lf of lockFiles) {
+        const fp = path.join(sessionDir, lf);
+        if (fs.existsSync(fp)) fs.rmSync(fp, { force: true });
+      }
+    } catch (_) {}
+
     await client.initialize();
+    initRetryCount = 0;
   } catch (err) {
     console.error('❌ ক্লায়েন্ট ইনিশিয়ালাইজেশনে সমস্যা:', err.message);
+    initRetryCount++;
+    if (initRetryCount <= 3) {
+      console.log(`🔄 ফ্রেন্ড ক্লায়েন্ট রিকভারি চলছে (${initRetryCount}/3)... ৩ সেকেন্ডে পুনরায় চেষ্টা হচ্ছে...`);
+      try { await client.destroy(); } catch (_) {}
+      setTimeout(() => {
+        isInitializing = false;
+        safeInitialize();
+      }, 3000);
+      return;
+    }
   } finally {
     isInitializing = false;
   }
