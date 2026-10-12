@@ -13,34 +13,45 @@ process.stderr.write('📡 [FREND BOT] Port: ' + (process.env.PORT || 3000) + '\
 
 require('dotenv').config({ quiet: true });
 
-// ─── Global Error Handlers (Prevents Puppeteer detached Frame crashes) ──
+// ─── Unbuffered Diagnostic Error & Signal Handlers ──────────────────────
 process.on('uncaughtException', (err) => {
-  const msg = err?.message || String(err || '');
-  if (msg.includes('detached Frame') || msg.includes('Execution context was destroyed') || msg.includes('Target closed') || msg.includes('Session closed')) {
-    console.warn('⚠️ Puppeteer ফ্রেম ওয়ার্নিং (বট সচল আছে):', msg);
-    return;
-  }
-  console.error('❌ Uncaught Exception:', err);
+  process.stderr.write('❌ [UNCAUGHT EXCEPTION]: ' + (err?.stack || err?.message || err) + '\n');
 });
 
 process.on('unhandledRejection', (reason) => {
-  const msg = reason?.message || String(reason || '');
-  if (msg.includes('detached Frame') || msg.includes('Execution context was destroyed') || msg.includes('Target closed') || msg.includes('Session closed')) {
-    console.warn('⚠️ Puppeteer আনহ্যান্ডেলড ওয়ার্নিং (বট সচল আছে):', msg);
-    return;
-  }
-  console.error('❌ Unhandled Rejection:', reason);
+  process.stderr.write('❌ [UNHANDLED REJECTION]: ' + (reason?.stack || reason?.message || reason) + '\n');
 });
 
+process.on('exit', (code) => {
+  process.stderr.write('🛑 [PROCESS EXIT] Code: ' + code + '\n');
+});
+
+['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'].forEach(sig => {
+  process.on(sig, () => {
+    process.stderr.write('🛑 [SIGNAL CAUGHT]: ' + sig + '\n');
+    process.exit(0);
+  });
+});
+
+process.stderr.write('📦 [STEP 1] Loading whatsapp-web.js...\n');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+
+process.stderr.write('📦 [STEP 2] Loading core dependencies...\n');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 
-const { handleMessage } = require('./src/handler');
+process.stderr.write('📦 [STEP 3] Loading database...\n');
 const db = require('./src/database');
+
+process.stderr.write('📦 [STEP 4] Loading handler...\n');
+const { handleMessage } = require('./src/handler');
+
+process.stderr.write('📦 [STEP 5] Loading timeParser...\n');
 const { parseTime, formatTime, formatRelativeTime } = require('./src/timeParser');
+
+process.stderr.write('📦 [STEP 6] Loading aiAnalyzer...\n');
 const {
   transcribeVoice,
   analyzeImageForReminderOrNote,
@@ -48,6 +59,8 @@ const {
   analyzeDocumentOrImage,
   saveMediaAttachment,
 } = require('./src/aiAnalyzer');
+
+process.stderr.write('📦 [STEP 7] Loading support modules...\n');
 const calendarSync = require('./src/calendarSync');
 const locationDb = require('./src/locationReminder');
 const offline = require('./src/offlineNotifier');
@@ -57,6 +70,8 @@ const cloudBackup = require('./src/cloudBackup');
 const authManager = require('./src/authManager');
 const aiConfig = require('./src/aiConfig');
 const reminderWorker = require('./src/reminderWorker');
+
+process.stderr.write('📦 [STEP 8] Dependencies loaded. Configuring Client...\n');
 
 // ─── WhatsApp Client Setup ────────────────────────────────────
 const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -961,14 +976,12 @@ client.on('disconnected', async (reason) => {
 
 // ─── Graceful Shutdown ────────────────────────────────────────
 const shutdownGracefully = async (signal) => {
-  console.log(`\n\n👋 সিগন্যাল ${signal} প্রাপ্ত: ফ্রেন্ড বট বন্ধ হচ্ছে...`);
+  process.stderr.write(`\n🛑 [SHUTDOWN] Signal ${signal} received: shutting down...\n`);
   try {
     await client.destroy();
   } catch (_) {}
   process.exit(0);
 };
-process.on('SIGINT', () => shutdownGracefully('SIGINT'));
-process.on('SIGTERM', () => shutdownGracefully('SIGTERM'));
 
 // ─── Safe Client Initializer (Prevents multiple calls & detached frame errors) ─
 let isInitializing = false;
