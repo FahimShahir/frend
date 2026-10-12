@@ -74,10 +74,12 @@ const client = new Client({
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
+      '--single-process',
       '--disable-gpu',
       '--disable-software-rasterizer',
       '--disable-extensions',
       '--disable-blink-features=AutomationControlled',
+      '--js-flags=--max-old-space-size=512',
       `--user-agent=${DESKTOP_USER_AGENT}`,
     ],
     timeout: 60000,
@@ -1023,12 +1025,14 @@ webDashboard.setBotClient(client, async () => {
   }, 2000);
 });
 
-// Start Multi-Device Live Web Dashboard Server
+// Start Multi-Device Live Web Dashboard Server FIRST
 webDashboard.startWebDashboardServer(process.env.PORT || 3000);
 
-// Start autonomous background reminder worker immediately on boot (does not wait for WhatsApp)
+// Start autonomous background reminder worker immediately on boot
 startReminderScheduler();
 
-console.log('🚀 বট শুরু হচ্ছে...\n');
+console.log('🚀 ফ্রেন্ড বট বুট সম্পন্ন। হোয়াটসঅ্যাপ ক্লায়েন্ট প্রস্তুত হচ্ছে...\n');
 
-safeInitialize();
+setTimeout(() => {
+  safeInitialize();
+}, 1500);

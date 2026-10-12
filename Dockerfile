@@ -3,6 +3,9 @@ FROM node:20-bookworm-slim
 # Install Chromium, build tools for native modules (better-sqlite3), fonts, and ffmpeg
 RUN apt-get update && apt-get install -y \
     chromium \
+    procps \
+    ca-certificates \
+    fonts-liberation \
     fonts-ipafont-gothic \
     fonts-wqy-zenhei \
     fonts-thai-tlwg \
