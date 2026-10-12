@@ -8,50 +8,40 @@
 
 'use strict';
 
-process.stdout.write('🚀 [FREND BOT] Starting application process...\n');
-process.stderr.write('📡 [FREND BOT] Port: ' + (process.env.PORT || 3000) + '\n');
-
 require('dotenv').config({ quiet: true });
 
-// ─── Unbuffered Diagnostic Error & Signal Handlers ──────────────────────
+const PORT = parseInt(process.env.PORT || '3000', 10);
+console.log('🚀 [FREND BOT] Starting application process...');
+console.log(`📡 [FREND BOT] Port: ${PORT}`);
+
+// ─── Unhandled Error & Exit Handlers ─────────────────────────────────────
 process.on('uncaughtException', (err) => {
-  process.stderr.write('❌ [UNCAUGHT EXCEPTION]: ' + (err?.stack || err?.message || err) + '\n');
+  console.error('❌ [UNCAUGHT EXCEPTION]:', err?.stack || err?.message || err);
 });
 
 process.on('unhandledRejection', (reason) => {
-  process.stderr.write('❌ [UNHANDLED REJECTION]: ' + (reason?.stack || reason?.message || reason) + '\n');
+  console.error('❌ [UNHANDLED REJECTION]:', reason?.stack || reason?.message || reason);
 });
 
 process.on('exit', (code) => {
-  process.stderr.write('🛑 [PROCESS EXIT] Code: ' + code + '\n');
+  console.log(`🛑 [PROCESS EXIT] Code: ${code}`);
 });
 
-['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'].forEach(sig => {
-  process.on(sig, () => {
-    process.stderr.write('🛑 [SIGNAL CAUGHT]: ' + sig + '\n');
-    process.exit(0);
-  });
-});
+// ─── Phase 1: Start Web Dashboard & /health Probe IMMEDIATELY ───────────
+console.log('📦 [PHASE 1] Initializing Web Dashboard & Health Server...');
+const webDashboard = require('./src/webDashboard');
+webDashboard.startWebDashboardServer(PORT);
+console.log(`✅ [PHASE 1] Web Dashboard & /health probe active on 0.0.0.0:${PORT}`);
 
-process.stderr.write('📦 [STEP 1] Loading whatsapp-web.js...\n');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-
-process.stderr.write('📦 [STEP 2] Loading core dependencies...\n');
+// ─── Phase 2: Loading core modules & database ───────────────────────────
+console.log('📦 [PHASE 2] Loading core modules and database...');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
-
-process.stderr.write('📦 [STEP 3] Loading database...\n');
 const db = require('./src/database');
-
-process.stderr.write('📦 [STEP 4] Loading handler...\n');
 const { handleMessage } = require('./src/handler');
-
-process.stderr.write('📦 [STEP 5] Loading timeParser...\n');
 const { parseTime, formatTime, formatRelativeTime } = require('./src/timeParser');
-
-process.stderr.write('📦 [STEP 6] Loading aiAnalyzer...\n');
 const {
   transcribeVoice,
   analyzeImageForReminderOrNote,
@@ -59,19 +49,19 @@ const {
   analyzeDocumentOrImage,
   saveMediaAttachment,
 } = require('./src/aiAnalyzer');
-
-process.stderr.write('📦 [STEP 7] Loading support modules...\n');
 const calendarSync = require('./src/calendarSync');
 const locationDb = require('./src/locationReminder');
 const offline = require('./src/offlineNotifier');
 const analytics = require('./src/analytics');
-const webDashboard = require('./src/webDashboard');
 const cloudBackup = require('./src/cloudBackup');
 const authManager = require('./src/authManager');
 const aiConfig = require('./src/aiConfig');
 const reminderWorker = require('./src/reminderWorker');
 
-process.stderr.write('📦 [STEP 8] Dependencies loaded. Configuring Client...\n');
+// ─── Phase 3: Loading whatsapp-web.js ───────────────────────────────────
+console.log('📦 [PHASE 3] Loading whatsapp-web.js...');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+console.log('📦 [PHASE 4] Dependencies loaded. Configuring WhatsApp Client...');
 
 // ─── WhatsApp Client Setup ────────────────────────────────────
 const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -1037,9 +1027,6 @@ webDashboard.setBotClient(client, async () => {
     }
   }, 2000);
 });
-
-// Start Multi-Device Live Web Dashboard Server FIRST
-webDashboard.startWebDashboardServer(process.env.PORT || 3000);
 
 // Start autonomous background reminder worker immediately on boot
 startReminderScheduler();
