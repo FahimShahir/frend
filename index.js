@@ -10,6 +10,9 @@
 
 require('dotenv').config();
 
+console.log('🚀 FREND Bot সার্ভার বুট হচ্ছে...');
+console.log('📡 কনটেইনার পোর্ট:', process.env.PORT || 3000);
+
 // ─── Global Error Handlers (Prevents Puppeteer detached Frame crashes) ──
 process.on('uncaughtException', (err) => {
   const msg = err?.message || String(err || '');
@@ -955,13 +958,15 @@ client.on('disconnected', async (reason) => {
 });
 
 // ─── Graceful Shutdown ────────────────────────────────────────
-process.on('SIGINT', async () => {
-  console.log('\n\n👋 ফ্রেন্ড বট বন্ধ হচ্ছে...');
+const shutdownGracefully = async (signal) => {
+  console.log(`\n\n👋 সিগন্যাল ${signal} প্রাপ্ত: ফ্রেন্ড বট বন্ধ হচ্ছে...`);
   try {
     await client.destroy();
   } catch (_) {}
   process.exit(0);
-});
+};
+process.on('SIGINT', () => shutdownGracefully('SIGINT'));
+process.on('SIGTERM', () => shutdownGracefully('SIGTERM'));
 
 // ─── Safe Client Initializer (Prevents multiple calls & detached frame errors) ─
 let isInitializing = false;

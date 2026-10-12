@@ -2610,6 +2610,13 @@ function startWebDashboardServer(port = 3000) {
       return;
     }
 
+    // ── Health Check Route for Railway & Cloud Hosts ──
+    if (url.pathname === '/health' || url.pathname === '/api/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'healthy', uptime: process.uptime(), timestamp: new Date().toISOString() }));
+      return;
+    }
+
     // ── Routes ──
     if (url.pathname === '/' || url.pathname === '/dashboard') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -3378,10 +3385,11 @@ function startWebDashboardServer(port = 3000) {
     }
   });
 
-  server.listen(port, () => {
+  const listenPort = parseInt(port, 10) || 3000;
+  server.listen(listenPort, '0.0.0.0', () => {
     const localIp = getLocalIpAddress();
-    console.log(`🌐 মাল্টি-ডিভাইস ওয়েব ড্যাশবোর্ড চালু: http://localhost:${port}`);
-    console.log(`📲 ফোন বা ট্যাবলেটে দেখতে ব্রাউজারে খুলো: http://${localIp}:${port}`);
+    console.log(`🌐 মাল্টি-ডিভাইস ওয়েব ড্যাশবোর্ড চালু: http://0.0.0.0:${listenPort}`);
+    console.log(`📲 ফোন বা ট্যাবলেটে দেখতে ব্রাউজারে খুলো: http://${localIp}:${listenPort}`);
   });
 
   return server;

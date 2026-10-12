@@ -41,14 +41,16 @@ function isOnline() { return _isOnline; }
  * ডেস্কটপ নোটিফিকেশন দেখাও (অফলাইনে)
  */
 function showDesktopNotification(title, message, userId = null) {
-  notifier.notify({
-    title: `🤖 ফ্রেন্ড — ${title}`,
-    message: message.replace(/[*_~`]/g, ''), // strip WhatsApp markdown
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    sound: true,
-    wait: false,
-    appID: 'Frend Bot',
-  });
+  try {
+    notifier.notify({
+      title: `🤖 ফ্রেন্ড — ${title}`,
+      message: message.replace(/[*_~`]/g, ''), // strip WhatsApp markdown
+      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+      sound: true,
+      wait: false,
+      appID: 'Frend Bot',
+    });
+  } catch (_) {}
 
   // Queue for later WhatsApp delivery if user_id given
   if (userId) {
