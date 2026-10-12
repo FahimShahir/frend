@@ -8,10 +8,10 @@
 
 'use strict';
 
-require('dotenv').config({ quiet: true });
+process.stdout.write('🚀 [FREND BOT] Starting application process...\n');
+process.stderr.write('📡 [FREND BOT] Port: ' + (process.env.PORT || 3000) + '\n');
 
-console.log('🚀 FREND Bot সার্ভার বুট হচ্ছে...');
-console.log('📡 কনটেইনার পোর্ট:', process.env.PORT || 3000);
+require('dotenv').config({ quiet: true });
 
 // ─── Global Error Handlers (Prevents Puppeteer detached Frame crashes) ──
 process.on('uncaughtException', (err) => {

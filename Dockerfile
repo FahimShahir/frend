@@ -26,7 +26,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --production && npm rebuild better-sqlite3 --build-from-source
 
 COPY . .
 
