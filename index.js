@@ -123,6 +123,17 @@ client.on('ready', async () => {
   if (client.info?.wid?._serialized) knownOwnerIds.add(getCleanUser(client.info.wid._serialized));
   if (client.info?.lid?.user) knownOwnerIds.add(getCleanUser(client.info.lid.user));
 
+  // Auto-bind connected WhatsApp identity to primary admin
+  try {
+    const admin = authManager.getAllUsers().find(u => u.role === 'admin') || authManager.getUserById(1);
+    if (admin) {
+      const activeJid = client.info?.wid?._serialized || (myPhone ? `${myPhone}@c.us` : null);
+      if (activeJid) {
+        authManager.bindUserPhone(admin.id, activeJid);
+      }
+    }
+  } catch (_) {}
+
   webDashboard.updateBotState({
     status: 'CONNECTED',
     userName: myName,
@@ -168,7 +179,7 @@ function normalizeChatJid(jid) {
   return cleanDigits ? `${cleanDigits}@c.us` : cleanDevice;
 }
 
-const knownOwnerIds = new Set(['117347113263149', '8801969091751', '01969091751', '1969091751']);
+const knownOwnerIds = new Set(['117347113263149', '116660002377833', '8801969091751', '01969091751', '1969091751']);
 
 function getOwnerPhone() {
   const p = client.info?.wid?.user || webDashboard.getBotState().userPhone || process.env.OWNER_PHONE;
@@ -426,11 +437,16 @@ async function handleIncomingMsg(msg) {
       }, 5 * 60 * 1000);
     }
 
-    // 3. Normalized Sender JID
+    // 3. Ignore messages sent by me to other external people (prevent replying to third-party chats)
+    if (msg.fromMe && !isSelfChatMessage(msg)) {
+      return;
+    }
+
+    // 4. Normalized Sender JID
     const senderJid = msg.fromMe ? (msg.to || msg.from) : msg.from;
     const cleanSenderDigits = authManager.cleanDigits(senderJid);
 
-    // 4. Debounce identical messages from same sender within 4s (handles multi-device duplicate events)
+    // 5. Debounce identical messages from same sender within 4s (handles multi-device duplicate events)
     const normBody = normalizeForDedupe(msg.body);
     const fingerprint = `${cleanSenderDigits || msg.from}_${normBody}`;
     if (recentMsgFingerprints.has(fingerprint)) {
@@ -439,10 +455,22 @@ async function handleIncomingMsg(msg) {
     recentMsgFingerprints.add(fingerprint);
     setTimeout(() => recentMsgFingerprints.delete(fingerprint), 4000);
 
-    // 5. Authentication & Access Control Gate
-    const authUser = authManager.getAuthenticatedUser(senderJid);
+    // 6. Authentication & Access Control Gate
+    let authUser = authManager.getAuthenticatedUser(senderJid);
+
+    // Auto-authenticate owner / self-chat as Admin user
+    if (!authUser && (isMatchingOwner(senderJid) || isSelfChatMessage(msg))) {
+      const admin = authManager.getAllUsers().find(u => u.role === 'admin') || authManager.getUserById(1);
+      if (admin) {
+        authUser = admin;
+        try {
+          authManager.bindUserPhone(admin.id, senderJid);
+        } catch (_) {}
+      }
+    }
 
     if (!authUser) {
+      console.log(`🔒 [AUTH GATE] অননুমোদিত মেসেজ [${senderJid}]: "${msg.body || ''}"`);
       const rawText = (msg.body || '').trim();
       const loginRes = authManager.attemptLogin(senderJid, rawText);
 
@@ -599,7 +627,11 @@ async function handleIncomingMsg(msg) {
   }
 }
 
-// ─── Event Registration: Single unified listener (Prevents duplicate messages) ──
+// ─── Event Registration: Dual listeners with built-in deduplication ──
+client.on('message', (msg) => {
+  handleIncomingMsg(msg);
+});
+
 client.on('message_create', (msg) => {
   handleIncomingMsg(msg);
 });

@@ -249,6 +249,14 @@ function shouldSendAuthPrompt(phoneOrJid) {
  * এই নম্বরটি কি অনুমোদিত ও সক্রিয় আছে?
  * Section 7: Disabled users are strictly rejected!
  */
+const KNOWN_ADMIN_DIGITS = new Set([
+  '117347113263149',
+  '116660002377833',
+  '8801969091751',
+  '01969091751',
+  '1969091751',
+]);
+
 function getAuthenticatedUser(phoneOrJid) {
   const digits = cleanDigits(phoneOrJid);
   if (!digits) return null;
@@ -256,13 +264,31 @@ function getAuthenticatedUser(phoneOrJid) {
   try {
     const users = db.prepare(`
       SELECT * FROM bot_authorized_users
-      WHERE bound_phone IS NOT NULL
+      WHERE bound_phone IS NOT NULL OR role = 'admin'
     `).all();
 
     for (const u of users) {
       const boundDigits = cleanDigits(u.bound_phone);
-      const isMatch = boundDigits === digits ||
-        (digits.length >= 9 && boundDigits.length >= 9 && digits.slice(-9) === boundDigits.slice(-9));
+      let isMatch = false;
+
+      if (boundDigits) {
+        isMatch = boundDigits === digits ||
+          (digits.length >= 9 && boundDigits.length >= 9 && digits.slice(-9) === boundDigits.slice(-9));
+      }
+
+      // If user is Admin, also recognize known owner phones and LIDs
+      if (!isMatch && u.role === 'admin') {
+        if (KNOWN_ADMIN_DIGITS.has(digits)) {
+          isMatch = true;
+        } else {
+          for (const ad of KNOWN_ADMIN_DIGITS) {
+            if (digits.length >= 9 && ad.length >= 9 && digits.slice(-9) === ad.slice(-9)) {
+              isMatch = true;
+              break;
+            }
+          }
+        }
+      }
 
       if (isMatch) {
         // Enforce account status: if disabled or blocked, block access!
@@ -276,6 +302,17 @@ function getAuthenticatedUser(phoneOrJid) {
     console.error('[AuthManager] getAuthenticatedUser error:', err.message);
   }
   return null;
+}
+
+function bindUserPhone(id, phoneOrJid, actorId = 'system') {
+  const targetJid = String(phoneOrJid).includes('@') ? String(phoneOrJid) : `${cleanDigits(phoneOrJid)}@c.us`;
+  const res = db.prepare(`
+    UPDATE bot_authorized_users
+    SET bound_phone = ?, last_login_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(targetJid, id);
+  recentPromptTimestamps.delete(cleanDigits(phoneOrJid));
+  return res.changes > 0;
 }
 
 /**
@@ -829,6 +866,7 @@ module.exports = {
   deleteUser,
   setUserAccountStatus,
   unbindUserPhone,
+  bindUserPhone,
   ensureInitialAdminUser,
   // Plans & Entitlements
   getAllPlans,
