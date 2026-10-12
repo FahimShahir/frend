@@ -8,7 +8,7 @@
 
 'use strict';
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 console.log('🚀 FREND Bot সার্ভার বুট হচ্ছে...');
 console.log('📡 কনটেইনার পোর্ট:', process.env.PORT || 3000);
