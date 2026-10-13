@@ -11,7 +11,18 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->validateCsrfTokens(except: [
+            'api/*',
+            'cron/*',
+            'admin/settings/artisan',
+            'admin/settings/test-gemini',
+            'admin/settings/test-bot',
+            'admin/migrations/*',
+            'admin/whatsapp/start',
+            'admin/whatsapp/restart',
+            'admin/whatsapp/logout',
+            'admin/whatsapp/send',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

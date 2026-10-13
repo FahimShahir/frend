@@ -333,8 +333,14 @@
             </li>
             <li>
                 <a href="{{ route('admin.migrations.index') }}" class="nav-link {{ request()->routeIs('admin.migrations.*') ? 'active' : '' }}">
-                    <span>⚙️</span>
+                    <span>🐬</span>
                     <span class="nav-text">মাইগ্রেশন ও ডেটাবেস</span>
+                </a>
+            </li>
+            <li>
+                <a href="{{ route('admin.settings.index') }}" class="nav-link {{ request()->routeIs('admin.settings.*') ? 'active' : '' }}">
+                    <span>⚙️</span>
+                    <span class="nav-text">ওয়েব টার্মিনাল ও সেটিংস</span>
                 </a>
             </li>
         </ul>

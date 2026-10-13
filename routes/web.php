@@ -6,6 +6,7 @@ use App\Http\Controllers\FrendNotesController;
 use App\Http\Controllers\FrendRemindersController;
 use App\Http\Controllers\SystemMigrationController;
 use App\Http\Controllers\WhatsAppWebhookController;
+use App\Http\Controllers\FrendSettingsController;
 
 // রুট পেজে গেলে সরাসরি WhatsApp কন্ট্রোল সেন্টারে রিডাইরেক্ট হবে
 Route::get('/', function () {
@@ -48,6 +49,15 @@ Route::prefix('admin')->name('admin.')->middleware(['web'])->group(function () {
         Route::post('/import-sql', [SystemMigrationController::class, 'importSqlFile'])->name('import-sql');
         Route::post('/clear-cache', [SystemMigrationController::class, 'clearCache'])->name('clear-cache');
         Route::post('/rollback', [SystemMigrationController::class, 'rollbackMigrations'])->name('rollback');
+    });
+
+    // 5. অল-ইন-ওয়ান সিস্টেম সেটিংস ও ওয়েব আর্টিসান টার্মিনাল (cPanel No-SSH Control)
+    Route::prefix('settings')->name('settings.')->group(function () {
+        Route::get('/', [FrendSettingsController::class, 'index'])->name('index');
+        Route::post('/update', [FrendSettingsController::class, 'update'])->name('update');
+        Route::post('/artisan', [FrendSettingsController::class, 'runArtisan'])->name('artisan');
+        Route::post('/test-gemini', [FrendSettingsController::class, 'testGemini'])->name('test-gemini');
+        Route::post('/test-bot', [FrendSettingsController::class, 'testBot'])->name('test-bot');
     });
 });
 
