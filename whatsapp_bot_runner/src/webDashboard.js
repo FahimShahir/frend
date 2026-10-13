@@ -3005,6 +3005,55 @@ function startWebDashboardServer(port = 3000) {
           return;
         }
       });
+    // ── Laravel / PHP WhatsApp Group Creation API (Mediation & Peacemaking) ──
+    if (url.pathname === '/api/create-group' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.title || !data.participants || !Array.isArray(data.participants)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'title এবং participants (array) ফিল্ড প্রয়োজন' }));
+            return;
+          }
+          if (!botState.clientRef || botState.status !== 'CONNECTED') {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'WhatsApp বর্তমানে সংযুক্ত নেই' }));
+            return;
+          }
+
+          const validParticipants = data.participants.map(p => {
+            let t = String(p).trim();
+            if (!t.endsWith('@c.us') && !t.endsWith('@lid')) {
+              t = t.replace(/\D/g, '') + '@c.us';
+            }
+            return t;
+          }).filter(Boolean);
+
+          const group = await botState.clientRef.createGroup(data.title, validParticipants);
+          let inviteCode = null;
+          try {
+            if (group && typeof group.getInviteCode === 'function') {
+              inviteCode = await group.getInviteCode();
+            }
+          } catch (_) {}
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            message: 'গ্রুপ সফলভাবে তৈরি করা হয়েছে।',
+            groupId: group.gid ? group.gid._serialized : (group.id ? group.id._serialized : null),
+            inviteCode: inviteCode,
+            inviteLink: inviteCode ? `https://chat.whatsapp.com/${inviteCode}` : null
+          }));
+          return;
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+          return;
+        }
+      });
       return;
     }
 

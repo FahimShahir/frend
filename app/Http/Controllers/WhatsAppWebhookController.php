@@ -26,6 +26,7 @@ use Exception;
 use App\Services\AggressiveLocalAiService;
 use App\Services\SelfHealingService;
 use App\Services\SelfUpdateService;
+use App\Services\HumanEmotionalCompanionService;
 
 class WhatsAppWebhookController extends Controller
 {
@@ -34,19 +35,22 @@ class WhatsAppWebhookController extends Controller
     protected SelfUpdateService $updater;
     protected FrendWhatsAppService $whatsapp;
     protected ReminderDispatchService $dispatcher;
+    protected HumanEmotionalCompanionService $companion;
 
     public function __construct(
         AggressiveLocalAiService $localAi,
         SelfHealingService $healer,
         SelfUpdateService $updater,
         FrendWhatsAppService $whatsapp,
-        ReminderDispatchService $dispatcher
+        ReminderDispatchService $dispatcher,
+        HumanEmotionalCompanionService $companion
     ) {
         $this->localAi = $localAi;
         $this->healer = $healer;
         $this->updater = $updater;
         $this->whatsapp = $whatsapp;
         $this->dispatcher = $dispatcher;
+        $this->companion = $companion;
     }
 
     /**
@@ -225,7 +229,14 @@ class WhatsAppWebhookController extends Controller
             }
         }
 
-        // ৬. অ্যাগ্রেসিভ লোকাল অফলাইন AI ইঞ্জিন (৯০%+ মেসেজ ০ মিলিসেকেন্ডে ও ০ API খরচে প্রসেস করে)
+        // ৬. অন্যকে মেসেজ পাঠানো বা বিরোধ মীমাংসা/মধ্যস্থতা (Mediation & Peacemaking)
+        $companionAction = $this->companion->handleEmotionalInteraction($text, $name, $effectiveUserId);
+        if (isset($companionAction['type']) && in_array($companionAction['type'], ['outgoing_message', 'need_phone', 'mediation_active', 'need_mediation_phone'])) {
+            $this->whatsapp->sendMessage($sender, $companionAction['reply']);
+            return response()->json(['status' => 'handled', 'type' => $companionAction['type']]);
+        }
+
+        // ৭. অ্যাগ্রেসিভ লোকাল অফলাইন AI ইঞ্জিন (রিমাইন্ডার ও দ্রুত অফলাইন রুলস)
         $aiResult = $this->localAi->processMessage($text, $name, $effectiveUserId);
 
         // যদি কোনো রিমাইন্ডার শনাক্ত হয় (অফলাইন রুলস বা ফলব্যাক দিয়ে)
@@ -253,15 +264,26 @@ class WhatsAppWebhookController extends Controller
             return response()->json(['status' => 'handled', 'type' => 'reminder', 'source' => $aiResult['source'] ?? 'local']);
         }
 
-        // ৭. চ্যাট রিপ্লাই প্রেরণ (লোকাল প্যাটার্ন, ক্যাশ বা ক্লাউড)
-        $chatReply = $aiResult['reply'] ?? 'আমি আপনার বার্তাটি পেয়েছি!';
+        // যদি লোকাল প্যাটার্ন বা ডাইনামিক ফিচার সরাসরি হ্যান্ডেল করে
+        if (!empty($aiResult['handled_locally']) && !empty($aiResult['reply']) && ($aiResult['source'] ?? '') !== 'local_cache') {
+            $this->whatsapp->sendMessage($sender, $aiResult['reply']);
+            return response()->json([
+                'status' => 'handled',
+                'type' => 'chat',
+                'handled_locally' => true,
+                'source' => $aiResult['source'] ?? 'local'
+            ]);
+        }
+
+        // ৮. জীবন্ত মানবিক ইমোশনাল কম্প্যানিয়ন (রোমান্টিকতা, মান-অভিমান, ক্ষমা চাওয়া, অতীত ডেটা দিয়ে আইডিয়া ও বুদ্ধি)
+        $chatReply = $companionAction['reply'] ?? ($aiResult['reply'] ?? 'আমি তোমার সাথেই আছি!');
         $this->whatsapp->sendMessage($sender, $chatReply);
 
         return response()->json([
             'status' => 'handled', 
-            'type' => 'chat', 
-            'handled_locally' => $aiResult['handled_locally'] ?? false,
-            'source' => $aiResult['source'] ?? 'local'
+            'type' => 'emotional_companion', 
+            'emotion' => $companionAction['emotion'] ?? 'caring',
+            'bond_level' => $companionAction['bond_level'] ?? 30,
         ]);
     }
 

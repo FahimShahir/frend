@@ -157,6 +157,30 @@ class FrendWhatsAppService
     }
 
     /**
+     * Laravel থেকে সরাসরি WhatsApp গ্রুপ তৈরি করা (সমঝোতা ও মেডিয়েশনের জন্য)
+     * 
+     * @param string $title গ্রুপের নাম
+     * @param array $participants অংশগ্রহণকারীদের ফোন নম্বর তালিকা
+     * @return array
+     */
+    public function createGroup(string $title, array $participants): array
+    {
+        $res = $this->request('POST', '/api/create-group', [
+            'title' => $title,
+            'participants' => $participants,
+        ], 15);
+
+        if ($res && isset($res['success'])) {
+            return $res;
+        }
+
+        return [
+            'success' => false,
+            'error' => $res['error'] ?? 'গ্রুপ তৈরি করতে সমস্যা হয়েছে।'
+        ];
+    }
+
+    /**
      * Laravel অ্যাডমিন থেকে বট রিস্টার্ট করা
      */
     public function restartBot(): array
