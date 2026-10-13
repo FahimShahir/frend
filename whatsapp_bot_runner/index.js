@@ -411,11 +411,115 @@ async function sendBotReply(targetOrMsg, text) {
   }
 }
 
+// ─── Laravel Webhook Forwarders (Friendship Mediation & Peacemaking) ──
+async function forwardToLaravelWebhook(payload) {
+  try {
+    const laravelUrl = process.env.APP_URL || process.env.LARAVEL_APP_URL || 'http://127.0.0.1:8000';
+    const http = require('http');
+    const postData = JSON.stringify(payload);
+    const u = new URL(`${laravelUrl}/api/whatsapp/webhook`);
+
+    return new Promise((resolve) => {
+      const req = http.request({
+        hostname: u.hostname,
+        port: u.port || 80,
+        path: u.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData),
+        },
+        timeout: 6000,
+      }, (res) => {
+        let respData = '';
+        res.on('data', chunk => { respData += chunk; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(respData));
+          } catch (_) {
+            resolve(null);
+          }
+        });
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(null);
+      });
+      req.write(postData);
+      req.end();
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
+async function forwardToLaravelGroupLeave(groupId, leaverPhone) {
+  try {
+    const laravelUrl = process.env.APP_URL || process.env.LARAVEL_APP_URL || 'http://127.0.0.1:8000';
+    const http = require('http');
+    const postData = JSON.stringify({
+      group_id: groupId,
+      leaver_phone: leaverPhone,
+    });
+    const u = new URL(`${laravelUrl}/api/whatsapp/group-leave`);
+
+    return new Promise((resolve) => {
+      const req = http.request({
+        hostname: u.hostname,
+        port: u.port || 80,
+        path: u.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData),
+        },
+        timeout: 6000,
+      }, (res) => {
+        let respData = '';
+        res.on('data', chunk => { respData += chunk; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(respData));
+          } catch (_) {
+            resolve(null);
+          }
+        });
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(null);
+      });
+      req.write(postData);
+      req.end();
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
 // ─── Unified Message Processor ────────────────────────────────
 async function handleIncomingMsg(msg) {
   try {
     if (!msg || msg.from === 'status@broadcast') return;
-    if (msg.isGroupMsg || msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us')) return;
+
+    // 0. Group Message Handling for Friendship Mediation
+    const isGroup = msg.isGroupMsg || msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us');
+    if (isGroup) {
+      if (isBotMessage(msg)) return;
+      const groupId = msg.from?.endsWith('@g.us') ? msg.from : (msg.to?.endsWith('@g.us') ? msg.to : null);
+      const participant = msg.author || msg.from;
+      if (groupId && msg.body && participant) {
+        forwardToLaravelWebhook({
+          sender: participant,
+          group_id: groupId,
+          message: msg.body,
+          name: msg._data?.notifyName || 'গ্রুপ সদস্য'
+        });
+      }
+      return;
+    }
 
     // 1. Watermark & Bot Own Message Filter (100% Loop Prevention)
     if (isBotMessage(msg)) {
@@ -491,6 +595,17 @@ async function handleIncomingMsg(msg) {
           `উদাহরণ: \`admin 123\`\n` +
           `_(অ্যাকাউন্ট না থাকলে ড্যাশবোর্ড অ্যাডমিনের সাথে যোগাযোগ করুন)_`;
         await sendBotReply(msg, failText);
+        return;
+      }
+
+      // Check if this message is part of an ongoing Friendship Mediation in Laravel (Party B outreach / response)!
+      const laravelMediationRes = await forwardToLaravelWebhook({
+        sender: senderJid,
+        message: rawText,
+        name: client.info?.pushname || 'বন্ধু'
+      });
+      if (laravelMediationRes && laravelMediationRes.status === 'handled' && laravelMediationRes.type === 'friendship_mediation') {
+        console.log(`🤝 [MEDIATION] Party B মেসেজ Laravel ফ্রেন্ডশিপ মিডিয়েশন দ্বারা প্রসেস হয়েছে [${laravelMediationRes.step || ''}]`);
         return;
       }
 
@@ -611,6 +726,18 @@ async function handleIncomingMsg(msg) {
     // ── Text Message ──
     if (msg.body && msg.body.trim()) {
       console.log(`📩 মেসেজ গ্রহণ [${ownerName}]: "${msg.body}"`);
+
+      // Check Friendship Mediation / Conflict Resolution in Laravel first
+      const laravelMediationRes = await forwardToLaravelWebhook({
+        sender: ownerUserId,
+        message: msg.body,
+        name: ownerName
+      });
+      if (laravelMediationRes && laravelMediationRes.status === 'handled' && laravelMediationRes.type === 'friendship_mediation') {
+        console.log(`🤝 [MEDIATION] Laravel ফ্রেন্ডশিপ মিডিয়েশন সক্রিয় [ধাপ: ${laravelMediationRes.step || 'N/A'}]`);
+        return;
+      }
+
       const response = await handleMessage(ownerUserId, ownerName, msg.body);
       if (response) {
         console.log(`🤖 রিপ্লাই তৈরি: "${response.slice(0, 30).replace(/\n/g, ' ')}..."`);
@@ -634,6 +761,20 @@ client.on('message', (msg) => {
 
 client.on('message_create', (msg) => {
   handleIncomingMsg(msg);
+});
+
+// ─── Group Leave Event Listener (Mediation Step 7 & Step 9) ──
+client.on('group_leave', async (notification) => {
+  try {
+    const groupId = notification.chatId || notification.id?.remote;
+    const leaverPhone = notification.author || notification.recipientIds?.[0] || notification.id?.participant;
+    console.log(`🚪 [GROUP LEAVE] গ্রুপ ত্যাগ করেছেন: ${leaverPhone} (গ্রুপ: ${groupId})`);
+    if (groupId && leaverPhone) {
+      await forwardToLaravelGroupLeave(groupId, leaverPhone);
+    }
+  } catch (err) {
+    console.error('❌ গ্রুপ লিভ ইভেন্ট প্রসেস করতে সমস্যা:', err.message);
+  }
 });
 
 // ─── Voice & Meeting Audio Handler (Section 6) ────────────────

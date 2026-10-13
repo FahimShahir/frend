@@ -27,6 +27,7 @@ use App\Services\AggressiveLocalAiService;
 use App\Services\SelfHealingService;
 use App\Services\SelfUpdateService;
 use App\Services\HumanEmotionalCompanionService;
+use App\Services\FriendshipMediationService;
 
 class WhatsAppWebhookController extends Controller
 {
@@ -36,6 +37,7 @@ class WhatsAppWebhookController extends Controller
     protected FrendWhatsAppService $whatsapp;
     protected ReminderDispatchService $dispatcher;
     protected HumanEmotionalCompanionService $companion;
+    protected FriendshipMediationService $mediation;
 
     public function __construct(
         AggressiveLocalAiService $localAi,
@@ -43,7 +45,8 @@ class WhatsAppWebhookController extends Controller
         SelfUpdateService $updater,
         FrendWhatsAppService $whatsapp,
         ReminderDispatchService $dispatcher,
-        HumanEmotionalCompanionService $companion
+        HumanEmotionalCompanionService $companion,
+        FriendshipMediationService $mediation
     ) {
         $this->localAi = $localAi;
         $this->healer = $healer;
@@ -51,6 +54,7 @@ class WhatsAppWebhookController extends Controller
         $this->whatsapp = $whatsapp;
         $this->dispatcher = $dispatcher;
         $this->companion = $companion;
+        $this->mediation = $mediation;
     }
 
     /**
@@ -64,6 +68,26 @@ class WhatsAppWebhookController extends Controller
 
         if (empty($sender) || empty($text)) {
             return response()->json(['status' => 'ignored', 'reason' => 'Empty sender or text']);
+        }
+
+        $groupId = $request->input('group_id') ?: $request->input('chat_id');
+        if (!$groupId && str_ends_with($sender, '@g.us')) {
+            $groupId = $sender;
+        }
+
+        // ০. ফ্রেন্ডশিপ কনফ্লিক্ট ও মধ্যস্থতা ইঞ্জিন (AI Friendship Conflict Resolution & Reconciliation)
+        $mediationRes = $this->mediation->handleMediationMessage($sender, $name, $text, $groupId);
+        if ($mediationRes && !empty($mediationRes['handled'])) {
+            if (!empty($mediationRes['reply'])) {
+                $targetJid = $groupId ?: $sender;
+                $this->whatsapp->sendMessage($targetJid, $mediationRes['reply']);
+            }
+            return response()->json([
+                'status' => 'handled',
+                'type' => 'friendship_mediation',
+                'step' => $mediationRes['step'] ?? null,
+                'case_code' => $mediationRes['case_code'] ?? null,
+            ]);
         }
 
         // Clean digits
@@ -284,6 +308,26 @@ class WhatsAppWebhookController extends Controller
             'type' => 'emotional_companion', 
             'emotion' => $companionAction['emotion'] ?? 'caring',
             'bond_level' => $companionAction['bond_level'] ?? 30,
+        ]);
+    }
+
+    /**
+     * WhatsApp গ্রুপ মেম্বার লিভ ইভেন্ট হ্যান্ডলার (Step 7 & Step 9 Mediation)
+     */
+    public function handleGroupMemberLeft(Request $request)
+    {
+        $groupId = $request->input('group_id') ?: $request->input('chat_id');
+        $leaverPhone = $request->input('leaver_phone') ?: $request->input('sender') ?: $request->input('user');
+
+        if (empty($groupId) || empty($leaverPhone)) {
+            return response()->json(['status' => 'error', 'message' => 'group_id and leaver_phone required'], 400);
+        }
+
+        $result = $this->mediation->handleGroupMemberLeftEvent($groupId, $leaverPhone);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $result,
         ]);
     }
 

@@ -87,6 +87,7 @@ Route::get('/cron/reminders/process', [WhatsAppWebhookController::class, 'cpanel
 
 // 6. WhatsApp Webhook endpoint (API)
 Route::post('/api/whatsapp/webhook', [WhatsAppWebhookController::class, 'handleIncomingMessage']);
+Route::post('/api/whatsapp/group-leave', [WhatsAppWebhookController::class, 'handleGroupMemberLeft']);
 
 // 7. অটোনোমাস সেলফ-হিলিং ও সেলফ-আপডেট API (External webhook, cron বা সরাসরি API কল)
 Route::post('/api/system/self-heal', [FrendSettingsController::class, 'selfHeal']);
