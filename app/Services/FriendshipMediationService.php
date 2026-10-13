@@ -57,8 +57,18 @@ class FriendshipMediationService
             }
         }
 
-        // ৩. নতুন মধ্যস্থতা শুরু করার ইচ্ছা শনাক্তকরণ (Initiator starting Step 1)
+        // ৩. পূর্বে বন্ধ হওয়া কেসের পর স্বতঃস্ফূর্তভাবে পুনরায় সক্রিয় করার ইচ্ছা শনাক্তকরণ (Reactivation Flow)
+        $previousTerminated = FriendshipMediation::findLatestTerminatedMediationFor($senderPhone);
+
+        if ($this->isReactivationIntent($text)) {
+            return $this->reactivateMediation($senderPhone, $senderName, $text, $previousTerminated);
+        }
+
+        // ৪. নতুন বা পুনরায় মধ্যস্থতা শুরু করার ইচ্ছা শনাক্তকরণ (Initiator starting Step 1)
         if ($this->isFriendshipConflictIntent($text)) {
+            if ($previousTerminated) {
+                return $this->reactivateMediation($senderPhone, $senderName, $text, $previousTerminated);
+            }
             return $this->initiateNewMediation($senderPhone, $senderName, $text);
         }
 
@@ -104,6 +114,80 @@ class FriendshipMediationService
     }
 
     /**
+     * বন্ধ হওয়া মধ্যস্থতা স্বতঃস্ফূর্তভাবে পুনরায় সক্রিয়করণ (Reactivation Workflow)
+     */
+    public function reactivateMediation(string $senderPhone, string $senderName, string $text, ?FriendshipMediation $previousCase = null): array
+    {
+        $cleanSender = preg_replace('/\D/', '', $senderPhone);
+        $caseCode = 'MED_RE_' . strtoupper(substr(md5(uniqid()), 0, 5));
+
+        $friendPhone = null;
+        $friendName = 'বন্ধু';
+
+        if ($previousCase) {
+            $isPrevA = str_contains($previousCase->party_a_phone, $cleanSender);
+            if ($isPrevA) {
+                $friendPhone = $previousCase->party_b_phone;
+                $friendName = $previousCase->party_b_name ?: 'বন্ধু';
+            } else {
+                $friendPhone = $previousCase->party_a_phone;
+                $friendName = $previousCase->party_a_name ?: 'বন্ধু';
+            }
+        }
+
+        // টেক্সটে যদি কোনো নতুন ফোন নম্বর থাকে
+        $newPhone = $this->extractPhoneNumber($text);
+        if ($newPhone) {
+            $friendPhone = $newPhone;
+        }
+
+        $med = FriendshipMediation::create([
+            'case_code' => $caseCode,
+            'status' => 'STEP_1_LISTENING_PARTY_A',
+            'party_a_id' => $senderPhone,
+            'party_a_phone' => $senderPhone,
+            'party_a_name' => $senderName ?: 'বন্ধু ১',
+            'party_a_statement' => $text,
+            'party_b_phone' => $friendPhone,
+            'party_b_name' => $friendName,
+            'attempts_count' => 0,
+            'is_terminated' => false,
+            'last_interaction_at' => now(),
+        ]);
+
+        $this->logMessage($med->id, 'REACTIVATED_STEP_1', $senderPhone, 'party_a', $text);
+
+        // ১. নতুন করে কথা শোনা
+        // ২. পরিস্থিতি পুনরায় যাচাই
+        // ৩. বন্ধুর সম্মতি নেওয়া
+        // ৪. আগের সীমা বজায় রাখা (সর্বোচ্চ ২ বার গ্রুপ মধ্যস্থতা)
+        $reply = "🤝 *স্বাগতম {$med->party_a_name}! পুনর্মিলন প্রচেষ্টা পুনরায় সক্রিয় করা হলো।*\n\n"
+               . "আমি অত্যন্ত আনন্দিত যে তুমি নিজে থেকে উদ্যোগ নিয়েছ এবং তোমার বন্ধুর সাথে সম্পর্ক ঠিক করতে চাইছ। অতীত ভুল বোঝাবুঝি বা আগের চেষ্টার ব্যর্থতাকে আমরা পেছনে রেখে সম্পূর্ণ নতুনভাবে পরিস্থিতি মূল্যায়ন করব।\n\n"
+               . "📝 *নতুন পুনর্মিলন প্রক্রিয়ার ধাপসমূহ:*\n"
+               . "১. *নতুন করে কথা শোনা:* তোমার বর্তমান মনের অনুভূতি, অভিমান এবং কী কী বিষয় নিয়ে তুমি নতুন করে কথা বলতে চাও, তা মন খুলে আমাকে বলো।\n"
+               . "২. *পরিস্থিতি পুনরায় যাচাই:* আমরা নতুন করে সম্ভাবনা যাচাই করব যাতে কোনো তিক্ততা না থাকে।\n";
+
+        if ($friendPhone) {
+            $reply .= "৩. *বন্ধুর সম্মতি নিশ্চিতকরণ:* তোমার বক্তব্য শোনার পর তোমার স্পষ্ট অনুমতি নিয়ে তোমার বন্ধু *{$friendName}* ({$friendPhone})-এর সাথে অত্যন্ত ভদ্র ও নিরপেক্ষভাবে যোগাযোগ করব। ওনার ইচ্ছাকেও আমরা সর্বোচ্চ সম্মান জানাব।\n";
+        } else {
+            $reply .= "৩. *বন্ধুর সম্মতি নিশ্চিতকরণ:* তোমার অনুভূতি শোনার পর তোমার বন্ধুর নম্বর নিয়ে ওনার অনুমতি চাইব।\n";
+        }
+
+        $reply .= "৪. *আগের সীমা বজায় রাখা:* পুনরায় সক্রিয় হলেও মধ্যস্থতায় আগের মতোই সর্বোচ্চ ২ বার গ্রুপ সেশনের সীমা বলবৎ থাকবে এবং কাউকে কখনোই জোর বা বিরক্ত করা হবে না।\n\n"
+               . "মন খুলে বলো, তুমি কীভাবে এই সম্পর্কটি আবার সুন্দর করে তুলতে চাও?";
+
+        $this->logMessage($med->id, 'REACTIVATED_STEP_1', null, 'ai_mediator', $reply);
+
+        return [
+            'handled' => true,
+            'reply' => $reply,
+            'case_code' => $caseCode,
+            'step' => 'STEP_1_LISTENING_PARTY_A',
+            'is_reactivated' => true,
+        ];
+    }
+
+    /**
      * Party A (প্রথম ব্যক্তি)-এর মেসেজ প্রসেসিং
      */
     protected function processPartyAMessage(FriendshipMediation $med, string $senderPhone, string $senderName, string $text): array
@@ -127,6 +211,19 @@ class FriendshipMediationService
                            . "তুমি বন্ধুর নম্বর ({$extractedPhone}) দিয়েছো। তবে তোমার স্পষ্ট সম্মতি ছাড়া আমি ওনাকে কোনো মেসেজ পাঠাবো না।\n\n"
                            . "📌 *আমি কি ওনার সাথে অত্যন্ত ভদ্র ও নিরপেক্ষভাবে যোগাযোগ করে ওনার দিকটি শুনতে পারি?*\n"
                            . "যদি তুমি রাজি থাকো, তবে লিখুন: `হ্যাঁ পাঠাও` বা `সম্মতি দিচ্ছি`।";
+
+                    $this->logMessage($med->id, 'STEP_2', null, 'ai_mediator', $reply);
+                    return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_2_REQUEST_FRIEND_CONTACT'];
+                }
+
+                // যদি আগের কেস থেকে বা ইতিমধ্যে বন্ধুর নম্বর সংরক্ষিত থাকে
+                if (!empty($med->party_b_phone)) {
+                    $med->status = 'STEP_2_REQUEST_FRIEND_CONTACT';
+                    $med->save();
+
+                    $reply = "আমি তোমার বর্তমান মানসিক অবস্থা ও অনুভূতিগুলো খুব গভীর মনোযোগ দিয়ে বুঝেছি {$med->party_a_name}।\n\n"
+                           . "তোমার বন্ধু *{$med->party_b_name}* ({$med->party_b_phone})-এর কাছে কি আমি নতুনভাবে অত্যন্ত মার্জিত ও নিরপেক্ষ একটি যোগাযোগের আমন্ত্রণ পাঠাব?\n\n"
+                           . "🔒 *তোমার স্পষ্ট সম্মতি প্রয়োজন:* তোমার স্পষ্ট অনুমতি ছাড়া আমি ওনাকে কোনো মেসেজ পাঠাব না। তুমি রাজি থাকলে লিখুন: `হ্যাঁ পাঠাও`।";
 
                     $this->logMessage($med->id, 'STEP_2', null, 'ai_mediator', $reply);
                     return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_2_REQUEST_FRIEND_CONTACT'];
@@ -343,12 +440,24 @@ class FriendshipMediationService
      */
     protected function sendInitialOutreachToPartyB(FriendshipMediation $med): void
     {
-        $message = "🌸 *আসসালামু আলাইকুম!*\n\n"
-                 . "আমি *FREND* — একটি নিরপেক্ষ ও সহানুভূতিশীল AI মধ্যস্থতাকারী হিসেবে আপনাকে অত্যন্ত শ্রদ্ধার সাথে নক দিচ্ছি।\n\n"
-                 . "আপনার বন্ধু *{$med->party_a_name}* আপনাদের মধ্যকার সাম্প্রতিক ভুল বোঝাবুঝি বা মনোমালিন্য নিয়ে মানসিকভাবে খুব ব্যথিত। ও আপনার বন্ধুত্বকে অত্যন্ত মূল্য দেয় এবং চায় সব ভুল বোঝাবুঝি দূর হোক।\n\n"
-                 . "🛡️ *আমার উদ্দেশ্য:* আমি কোনো একজনের পক্ষ নেওয়ার জন্য আসিনি। আমি উভয় পক্ষের অনুভূতি ও দৃষ্টিকোণ নিরপেক্ষভাবে বুঝে আপনাদের শান্ত আলোচনার সুযোগ করে দিতে চাই।\n\n"
-                 . "📌 আপনাকে কথা বলতে বা বন্ধুত্ব ঠিক করতে কোনো প্রকার চাপ দেওয়া হচ্ছে না। সিদ্ধান্ত সম্পূর্ণ আপনার।\n\n"
-                 . "আপনি কি আপনার দৃষ্টিকোণ থেকে বিষয়টি জানাতে আগ্রহী? আগ্রহী হলে অনুগ্রহ করে ছোট করে একটি রিপ্লাই দিন। ধন্যবাদ! 🤝";
+        $isReactivated = str_starts_with($med->case_code, 'MED_RE_');
+
+        if ($isReactivated) {
+            $message = "🌸 *আসসালামু আলাইকুম!*\n\n"
+                     . "আমি *FREND* — আপনার শুভাকাঙ্ক্ষী ও নিরপেক্ষ AI মধ্যস্থতাকারী হিসেবে আপনাকে অত্যন্ত শ্রদ্ধার সাথে লিখছি।\n\n"
+                     . "আপনার বন্ধু *{$med->party_a_name}* অতীতের ভুল বোঝাবুঝি বা আগের তিক্ততা পেছনে ফেলে সম্পূর্ণ নতুনভাবে আপনার সাথে কথা বলতে এবং সম্পর্ক ঠিক করতে আন্তরিক ইচ্ছা প্রকাশ করেছে।\n\n"
+                     . "ও আপনার বন্ধুত্বকে অত্যন্ত মূল্য দেয় এবং চায় একটি সুন্দর সৌহার্দ্যপূর্ণ সম্পর্ক ফিরে আসুক।\n\n"
+                     . "🛡️ *আমার অবস্থান:* আগের মতোই আমি সম্পূর্ণ নিরপেক্ষ এবং অতীত কোনো ব্যর্থতাকে টেনে আনা হবে না।\n\n"
+                     . "📌 আপনাকে কথা বলতে বা বন্ধুত্ব ঠিক করতে কোনো প্রকার চাপ দেওয়া হচ্ছে না। সিদ্ধান্ত ও পছন্দ সম্পূর্ণ আপনার এবং আপনার ইচ্ছাকে সর্বোচ্চ সম্মান জানানো হবে।\n\n"
+                     . "আপনি কি ওনার এই আন্তরিক উদ্যোগকে স্বাগত জানিয়ে নতুন করে একবার কথা বলার বা শান্ত আলোচনার সুযোগ দিতে আগ্রহী? আগ্রহী হলে অনুগ্রহ করে ছোট করে একটি রিপ্লাই দিন। ধন্যবাদ! 🤝";
+        } else {
+            $message = "🌸 *আসসালামু আলাইকুম!*\n\n"
+                     . "আমি *FREND* — একটি নিরপেক্ষ ও সহানুভূতিশীল AI মধ্যস্থতাকারী হিসেবে আপনাকে অত্যন্ত শ্রদ্ধার সাথে নক দিচ্ছি।\n\n"
+                     . "আপনার বন্ধু *{$med->party_a_name}* আপনাদের মধ্যকার সাম্প্রতিক ভুল বোঝাবুঝি বা মনোমালিন্য নিয়ে মানসিকভাবে খুব ব্যথিত। ও আপনার বন্ধুত্বকে অত্যন্ত মূল্য দেয় এবং চায় সব ভুল বোঝাবুঝি দূর হোক।\n\n"
+                     . "🛡️ *আমার উদ্দেশ্য:* আমি কোনো একজনের পক্ষ নেওয়ার জন্য আসিনি। আমি উভয় পক্ষের অনুভূতি ও দৃষ্টিকোণ নিরপেক্ষভাবে বুঝে আপনাদের শান্ত আলোচনার সুযোগ করে দিতে চাই।\n\n"
+                     . "📌 আপনাকে কথা বলতে বা বন্ধুত্ব ঠিক করতে কোনো প্রকার চাপ দেওয়া হচ্ছে না। সিদ্ধান্ত সম্পূর্ণ আপনার।\n\n"
+                     . "আপনি কি আপনার দৃষ্টিকোণ থেকে বিষয়টি জানাতে আগ্রহী? আগ্রহী হলে অনুগ্রহ করে ছোট করে একটি রিপ্লাই দিন। ধন্যবাদ! 🤝";
+        }
 
         $this->whatsapp->sendMessage($med->party_b_phone, $message);
         $this->logMessage($med->id, 'STEP_3', $med->party_b_phone, 'ai_mediator', $message);
@@ -562,6 +671,25 @@ class FriendshipMediationService
             'action' => 'STEP_9_PERMANENT_SHUTDOWN',
             'reason' => $reason,
         ];
+    }
+
+    /**
+     * পুনরায় মিলতে চাওয়া বা পুনর্মিলন সক্রিয় করার ইচ্ছা শনাক্তকারী ইনটেন্ট
+     */
+    public function isReactivationIntent(string $text): bool
+    {
+        $t = mb_strtolower($text, 'UTF-8');
+        
+        $reconcileActions = '(?:মিলতে|মিটমাট|কথা\s*বলতে|সম্পর্ক\s*ঠিক|বন্ধুত্ব\s*ঠিক|পুনর্মিলন|ভুল\s*বোঝাবুঝি\s*মিটাতে|এক\s*হতে|আগের\s*মতো\s*হতে|সমঝোতা|মিলে\s*যেতে|মিটিয়ে\s*নিতে|মিল\s*হতে)';
+        $intentMarkers = '(?:চাই|চাচ্ছি|ইচ্ছা|আগ্রহী|ভাবছি|পারব|হবে|করব|করতে\s*চাই|চেষ্টা\s*করতে\s*চাই)';
+        $againWords = '(?:আবার|নতুন\s*করে|পুনরায়|পুনরায়|আরেকবার|দ্বিতীয়বার|দ্বিতীয়\s*সুযোগ|আরেকটা\s*চান্স)';
+
+        return (bool) preg_match("/{$reconcileActions}.*?{$intentMarkers}/iu", $t)
+            || (bool) preg_match("/{$againWords}.*?{$reconcileActions}/iu", $t)
+            || (bool) preg_match("/{$againWords}.*?(?:বন্ধু|দোস্ত|ফ্রেন্ড|ওর).*?(?:কথা|মিল|সম্পর্ক)/iu", $t)
+            || (bool) preg_match('/(?:সম্পর্ক|বন্ধুত্ব|দোস্তি)\s*(?:ঠিক|ভালো|স্বাভাবিক)\s*কর/iu', $t)
+            || (bool) preg_match('/(?:কথা\s*বলিয়ে|মিলিয়ে|মিটিয়ে)\s*(?:দাও|দিন|দেবা)/iu', $t)
+            || (bool) preg_match('/(?:আবার\s*বন্ধুত্ব|পুনরায়\s*সক্রিয়|পুনরায়\s*সক্রিয়|reactivate|restart\s*mediation|reconcile)/iu', $t);
     }
 
     /**

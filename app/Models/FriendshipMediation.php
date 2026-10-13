@@ -71,4 +71,22 @@ class FriendshipMediation extends Model
             ->latest()
             ->first();
     }
+
+    /**
+     * Finds latest terminated mediation for either Party A or Party B
+     */
+    public static function findLatestTerminatedMediationFor(string $phone): ?self
+    {
+        $cleanPhone = preg_replace('/\D/', '', $phone);
+
+        return self::where('is_terminated', true)
+            ->where(function ($q) use ($phone, $cleanPhone) {
+                $q->where('party_a_phone', $phone)
+                  ->orWhere('party_a_phone', 'LIKE', "%{$cleanPhone}%")
+                  ->orWhere('party_b_phone', $phone)
+                  ->orWhere('party_b_phone', 'LIKE', "%{$cleanPhone}%");
+            })
+            ->latest()
+            ->first();
+    }
 }
