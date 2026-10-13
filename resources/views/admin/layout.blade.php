@@ -361,6 +361,12 @@
                 </a>
             </li>
             <li>
+                <a href="{{ route('admin.users.index') }}" class="nav-link {{ request()->routeIs('admin.users.*') ? 'active' : '' }}">
+                    <span>👥</span>
+                    <span class="nav-text">ইউজার ম্যানেজমেন্ট</span>
+                </a>
+            </li>
+            <li>
                 <a href="{{ route('admin.notes.index') }}" class="nav-link {{ request()->routeIs('admin.notes.*') ? 'active' : '' }}">
                     <span>📝</span>
                     <span class="nav-text">নোট মেমোরি</span>
@@ -397,6 +403,9 @@
         <nav class="header-nav-tabs">
             <a href="{{ route('admin.whatsapp.index') }}" class="header-tab {{ request()->routeIs('admin.whatsapp.*') ? 'active' : '' }}">
                 <span>📡</span> <span>WhatsApp কন্ট্রোল</span>
+            </a>
+            <a href="{{ route('admin.users.index') }}" class="header-tab {{ request()->routeIs('admin.users.*') ? 'active' : '' }}">
+                <span>👥</span> <span>ইউজার ম্যানেজমেন্ট</span>
             </a>
             <a href="{{ route('admin.notes.index') }}" class="header-tab {{ request()->routeIs('admin.notes.*') ? 'active' : '' }}">
                 <span>📝</span> <span>নোট মেমোরি</span>

@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin/settings/*',
             'admin/migrations/*',
             'admin/whatsapp/*',
+            'admin/users/*',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

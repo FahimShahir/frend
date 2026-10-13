@@ -7,6 +7,7 @@ use App\Http\Controllers\FrendRemindersController;
 use App\Http\Controllers\SystemMigrationController;
 use App\Http\Controllers\WhatsAppWebhookController;
 use App\Http\Controllers\FrendSettingsController;
+use App\Http\Controllers\FrendUsersController;
 
 // রুট পেজে গেলে সরাসরি WhatsApp কন্ট্রোল সেন্টারে রিডাইরেক্ট হবে
 Route::get('/', function () {
@@ -54,7 +55,18 @@ Route::prefix('admin')->name('admin.')->middleware(['web'])->group(function () {
         Route::post('/rollback', [SystemMigrationController::class, 'rollbackMigrations'])->name('rollback');
     });
 
-    // 5. অল-ইন-ওয়ান সিস্টেম সেটিংস ও ওয়েব আর্টিসান টার্মিনাল (cPanel No-SSH Control)
+    // 5. ইউজার ও একাউন্ট ম্যানেজমেন্ট (রোলেস, প্ল্যান ও পারমিশন)
+    Route::prefix('users')->name('users.')->group(function () {
+        Route::get('/', [FrendUsersController::class, 'index'])->name('index');
+        Route::post('/', [FrendUsersController::class, 'store'])->name('store');
+        Route::post('/{id}/update', [FrendUsersController::class, 'update'])->name('update');
+        Route::post('/{id}/status', [FrendUsersController::class, 'updateStatus'])->name('status');
+        Route::post('/{id}/reset-password', [FrendUsersController::class, 'resetPassword'])->name('reset-password');
+        Route::post('/{id}/unbind-phone', [FrendUsersController::class, 'unbindPhone'])->name('unbind-phone');
+        Route::delete('/{id}', [FrendUsersController::class, 'destroy'])->name('destroy');
+    });
+
+    // 6. অল-ইন-ওয়ান সিস্টেম সেটিংস ও ওয়েব আর্টিসান টার্মিনাল (cPanel No-SSH Control)
     Route::prefix('settings')->name('settings.')->group(function () {
         Route::get('/', [FrendSettingsController::class, 'index'])->name('index');
         Route::post('/update', [FrendSettingsController::class, 'update'])->name('update');
