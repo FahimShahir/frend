@@ -34,7 +34,10 @@ class Setting extends Model
     public static function get(string $key, $default = null)
     {
         $setting = static::find($key);
-        return $setting ? $setting->value : $default;
+        if ($setting && $setting->value !== null && trim($setting->value) !== '') {
+            return $setting->value;
+        }
+        return $default;
     }
 
     /**

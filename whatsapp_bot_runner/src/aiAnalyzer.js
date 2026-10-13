@@ -62,25 +62,31 @@ const SYSTEM_PROMPT = `তুমি একটি বাংলা/ইংরেজ
 
 function getModelList() {
   const settings = aiConfig.getSettings();
-  return [
-    'gemini-2.5-flash',
+  const list = [
     settings.geminiModel,
     'gemini-3.5-flash-lite',
+    'gemini-flash-lite-latest',
+    'gemini-3.1-flash-lite',
   ].filter(Boolean);
+  return [...new Set(list)];
 }
 
-async function generateWithFallback(client, parts, timeoutMs = 8000) {
+async function generateWithFallback(client, parts, timeoutMs = 15000) {
   let lastErr = null;
   const models = getModelList();
   for (const modelName of models) {
+    let timerId = null;
     try {
       const model = client.getGenerativeModel({ model: modelName });
       const apiCall = model.generateContent(parts);
-      const timer = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('AI Request Timeout')), timeoutMs)
-      );
-      return await Promise.race([apiCall, timer]);
+      const timeoutPromise = new Promise((_, reject) => {
+        timerId = setTimeout(() => reject(new Error(`AI Request Timeout (${modelName})`)), timeoutMs);
+      });
+      const res = await Promise.race([apiCall, timeoutPromise]);
+      if (timerId) clearTimeout(timerId);
+      return res;
     } catch (err) {
+      if (timerId) clearTimeout(timerId);
       lastErr = err;
       continue;
     }

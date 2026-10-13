@@ -138,8 +138,8 @@ class HumanEmotionalCompanionService
     protected function detectConflictMediationIntent(string $text, string $userName, string $userId, UserEmotionalProfile $profile): array
     {
         // যেমন: অমুকের সাথে ঝগড়া হয়েছে মিটিয়ে দাও / ঝামেলা হয়েছে গ্রুপ খুলে দাও
-        if (preg_match('/(?:ঝগড়া|ঝামেলা|মনোমালিন্য|রাগারাগি|ভুল\s*বোঝাবুঝি|fight|breakup|kotha\s*bondho).+(?:মিটিয়ে|সমাধান|মিলিয়ে|গ্রুপ|কথা\s*বলায়|মানাও)/ius', $text)
-            || preg_match('/^(?:মিটিয়ে\s*দাও|মিলিয়ে\s*দাও|গ্রুপ\s*খুলো|গ্রুপ\s*খুলে\s*দাও)[:\s]*(.*)$/ius', $text)) {
+        if (preg_match('/(?:ঝগ[ড়ড]া|ঝামেলা|মনোমালিন্য|রাগারাগি|ভুল\s*বোঝাবুঝি|fight|breakup|kotha\s*bondho).+(?:মিট[ািীে]+|মিটমাট|সমাধান|মিল[ািীে]+|গ্রুপ|কথা\s*বলা|মানাও)/ius', $text)
+            || preg_match('/^(?:মিট[ািীে]+\s*দাও|মিল[ািীে]+\s*দাও|মিটমাট\s*কর[ো]?|গ্রুপ\s*খুলো|গ্রুপ\s*খুলে\s*দাও)[:\s]*(.*)$/ius', $text)) {
             
             // ফোন নম্বর খোঁজ
             $phone = $this->extractPhoneNumber($text);
@@ -274,32 +274,37 @@ class HumanEmotionalCompanionService
 PROMPT;
 
         // Gemini AI দিয়ে গভীর ব্যক্তিগত উত্তর তৈরি
-        try {
-            $apiKey = env('GEMINI_API_KEY');
-            if (!empty($apiKey)) {
-                $response = Http::timeout(10)->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={$apiKey}", [
-                    'contents' => [
-                        [
-                            'parts' => [
-                                ['text' => "{$systemInstruction}\n\nসাম্প্রতিক কথোপকথন:\n{$conversationHistoryText}\n\n{$userName}: {$text}\n\nFREND এর উত্তর:"]
+        $apiKey = \App\Models\Setting::get('GEMINI_API_KEY') ?: env('GEMINI_API_KEY');
+        if (!empty($apiKey)) {
+            $candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite'];
+            foreach ($candidateModels as $cModel) {
+                try {
+                    $response = Http::timeout(12)->post("https://generativelanguage.googleapis.com/v1beta/models/{$cModel}:generateContent?key={$apiKey}", [
+                        'contents' => [
+                            [
+                                'parts' => [
+                                    ['text' => "{$systemInstruction}\n\nসাম্প্রতিক কথোপকথন:\n{$conversationHistoryText}\n\n{$userName}: {$text}\n\nFREND এর উত্তর:"]
+                                ]
                             ]
+                        ],
+                        'generationConfig' => [
+                            'temperature' => 0.85,
+                            'maxOutputTokens' => 1000,
                         ]
-                    ],
-                    'generationConfig' => [
-                        'temperature' => 0.85,
-                        'maxOutputTokens' => 1000,
-                    ]
-                ]);
+                    ]);
 
-                if ($response->successful()) {
-                    $json = $response->json();
-                    $reply = $json['candidates'][0]['content']['parts'][0]['text'] ?? '';
-                    if (!empty($reply)) {
-                        return trim($reply);
+                    if ($response->successful()) {
+                        $json = $response->json();
+                        $reply = $json['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                        if (!empty($reply)) {
+                            return trim($reply);
+                        }
                     }
+                } catch (Exception $e) {
+                    continue;
                 }
             }
-        } catch (Exception $e) {}
+        }
 
         // অফলাইন ইমোশনাল ফলব্যাক (যদি API কোনো কারণে বন্ধ থাকে)
         return $this->getOfflineEmotionalFallback($emotion, $nickname);

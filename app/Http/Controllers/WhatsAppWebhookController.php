@@ -257,7 +257,12 @@ class WhatsAppWebhookController extends Controller
         $companionAction = $this->companion->handleEmotionalInteraction($text, $name, $effectiveUserId);
         if (isset($companionAction['type']) && in_array($companionAction['type'], ['outgoing_message', 'need_phone', 'mediation_active', 'need_mediation_phone'])) {
             $this->whatsapp->sendMessage($sender, $companionAction['reply']);
-            return response()->json(['status' => 'handled', 'type' => $companionAction['type']]);
+            return response()->json(['status' => 'handled', 'type' => in_array($companionAction['type'], ['mediation_active', 'need_mediation_phone']) ? 'friendship_mediation' : $companionAction['type']]);
+        }
+
+        // যদি whatsapp_bot_runner শুধুমাত্র মিডিয়েশন বা আউটগোয়িং মেসেজ যাচাইয়ের জন্য পাঠিয়ে থাকে
+        if ($request->input('check_only') === 'mediation') {
+            return response()->json(['status' => 'not_handled', 'reason' => 'normal_chat_for_runner']);
         }
 
         // ৭. অ্যাগ্রেসিভ লোকাল অফলাইন AI ইঞ্জিন (রিমাইন্ডার ও দ্রুত অফলাইন রুলস)
@@ -288,8 +293,13 @@ class WhatsAppWebhookController extends Controller
             return response()->json(['status' => 'handled', 'type' => 'reminder', 'source' => $aiResult['source'] ?? 'local']);
         }
 
-        // যদি লোকাল প্যাটার্ন বা ডাইনামিক ফিচার সরাসরি হ্যান্ডেল করে
-        if (!empty($aiResult['handled_locally']) && !empty($aiResult['reply']) && ($aiResult['source'] ?? '') !== 'local_cache') {
+        // যদি লোকাল প্যাটার্ন বা ডাইনামিক ফিচার সরাসরি হ্যান্ডেল করে (শুধুমাত্র ইউটিলিটি/ক্যালকুলেশন বা লাইভ API না থাকলে)
+        $hasLiveApiKey = !empty(\App\Models\Setting::get('GEMINI_API_KEY') ?: env('GEMINI_API_KEY'));
+        $isDeterministicUtility = preg_match('/^\s*(\d+(?:\.\d+)?)\s*([\+\-\*\/])\s*(\d+(?:\.\d+)?)/iu', $cleanText)
+            || preg_match('/(?:সেলফ\s*হিলিং|self\s*heal|system\s*check)/iu', $cleanText)
+            || ($aiResult['source'] ?? '') === 'dynamic_feature';
+
+        if (!empty($aiResult['handled_locally']) && !empty($aiResult['reply']) && ($aiResult['source'] ?? '') !== 'local_cache' && (!$hasLiveApiKey || $isDeterministicUtility)) {
             $this->whatsapp->sendMessage($sender, $aiResult['reply']);
             return response()->json([
                 'status' => 'handled',

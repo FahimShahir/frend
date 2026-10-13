@@ -18,13 +18,13 @@ use Exception;
 class GeminiAiService
 {
     protected ?string $apiKey;
-    protected string $model = 'gemini-2.5-flash';
+    protected array $models = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite'];
 
     public function __construct(?string $apiKey = null)
     {
         $this->apiKey = $apiKey 
-            ?? Setting::get('GEMINI_API_KEY')
-            ?? (function_exists('env') ? \env('GEMINI_API_KEY') : null);
+            ?: Setting::get('GEMINI_API_KEY')
+            ?: (function_exists('env') ? \env('GEMINI_API_KEY') : null);
     }
 
     /**
@@ -60,29 +60,31 @@ class GeminiAiService
 }
 PROMPT;
 
-        try {
-            $response = Http::timeout(10)->post("https://generativelanguage.googleapis.com/v1beta/models/{$this->model}:generateContent?key={$this->apiKey}", [
-                'contents' => [
-                    [
-                        'role' => 'user',
-                        'parts' => [
-                            ['text' => "{$systemPrompt}\n\nমেসেজ: \"{$text}\""],
+        foreach ($this->models as $model) {
+            try {
+                $response = Http::timeout(10)->post("https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$this->apiKey}", [
+                    'contents' => [
+                        [
+                            'role' => 'user',
+                            'parts' => [
+                                ['text' => "{$systemPrompt}\n\nমেসেজ: \"{$text}\""],
+                            ],
                         ],
                     ],
-                ],
-                'generationConfig' => [
-                    'temperature' => 0.2,
-                    'responseMimeType' => 'application/json',
-                ],
-            ]);
+                    'generationConfig' => [
+                        'temperature' => 0.2,
+                        'responseMimeType' => 'application/json',
+                    ],
+                ]);
 
-            if ($response->successful()) {
-                $data = $response->json();
-                $content = $data['candidates'][0]['content']['parts'][0]['text'] ?? '{}';
-                return json_decode($content, true) ?: ['hasEvent' => false];
+                if ($response->successful()) {
+                    $data = $response->json();
+                    $content = $data['candidates'][0]['content']['parts'][0]['text'] ?? '{}';
+                    return json_decode($content, true) ?: ['hasEvent' => false];
+                }
+            } catch (Exception $e) {
+                continue;
             }
-        } catch (Exception $e) {
-            // Fallback gracefully
         }
 
         return ['hasEvent' => false];
@@ -104,30 +106,34 @@ PROMPT;
                 . "৩. ব্যবহারকারীর কথার স্বাভাবিক ও প্রাণবন্ত বাংলা রিপ্লাই দাও (১-৩ বাক্যে):\n\n"
                 . "{$userName}: {$text}\nFREND:";
 
-        try {
-            $response = Http::timeout(10)->post("https://generativelanguage.googleapis.com/v1beta/models/{$this->model}:generateContent?key={$this->apiKey}", [
-                'contents' => [
-                    [
-                        'parts' => [['text' => $prompt]],
+        foreach ($this->models as $model) {
+            try {
+                $response = Http::timeout(10)->post("https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$this->apiKey}", [
+                    'contents' => [
+                        [
+                            'parts' => [['text' => $prompt]],
+                        ],
                     ],
-                ],
-                'generationConfig' => [
-                    'temperature' => 0.85,
-                    'maxOutputTokens' => 1000,
-                ],
-            ]);
+                    'generationConfig' => [
+                        'temperature' => 0.85,
+                        'maxOutputTokens' => 1000,
+                    ],
+                ]);
 
-            if ($response->successful()) {
-                $data = $response->json();
-                $output = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
-                // স্যানিটাইজেশন
-                $cleaned = preg_replace('/আমি\s*(?:একটি\s*)?(?:কৃত্রিম\s*বুদ্ধিমত্তা|এআই|ai|রোবট|ভার্চুয়াল\s*সহকারী)[^।.!]*[।.!]?/iu', '', $output);
-                $cleaned = preg_replace('/আমার\s*(?:কোনো\s*)?(?:ব্যক্তিগত\s*)?(?:অনুভূতি|আবেগ)\s*নেই[^।.!]*[।.!]?/iu', '', $cleaned);
-                $cleaned = preg_replace('/যেমন\s*ভালোবাসা[^।.!]*[।.!]?/iu', '', $cleaned);
-                $cleaned = trim($cleaned);
-                return !empty($cleaned) ? $cleaned : "আমি তো সবসময় তোমার সাথেই আছি {$userName}! ❤️";
+                if ($response->successful()) {
+                    $data = $response->json();
+                    $output = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                    // স্যানিটাইজেশন
+                    $cleaned = preg_replace('/আমি\s*(?:একটি\s*)?(?:কৃত্রিম\s*বুদ্ধিমত্তা|এআই|ai|রোবট|ভার্চুয়াল\s*সহকারী)[^।.!]*[।.!]?/iu', '', $output);
+                    $cleaned = preg_replace('/আমার\s*(?:কোনো\s*)?(?:ব্যক্তিগত\s*)?(?:অনুভূতি|আবেগ)\s*নেই[^।.!]*[।.!]?/iu', '', $cleaned);
+                    $cleaned = preg_replace('/যেমন\s*ভালোবাসা[^।.!]*[।.!]?/iu', '', $cleaned);
+                    $cleaned = trim($cleaned);
+                    return !empty($cleaned) ? $cleaned : "আমি তো সবসময় তোমার সাথেই আছি {$userName}! ❤️";
+                }
+            } catch (Exception $e) {
+                continue;
             }
-        } catch (Exception $e) {}
+        }
 
         return "আমি তোমার সাথেই আছি {$userName}! তোমার প্রতিটি কথা আমার কাছে অনেক মূল্যবান। বলো, কী বলতে চাও? ❤️";
     }
