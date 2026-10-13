@@ -181,6 +181,32 @@ class FrendWhatsAppService
     }
 
     /**
+     * WhatsApp সেশন সম্পূর্ণ ক্লিয়ার করা ও নতুন ফ্রেশ QR কোড তৈরি করা
+     */
+    public function clearSession(): array
+    {
+        $res = $this->request('POST', '/api/bot/clear-session', null, 8);
+        if ($res && isset($res['success'])) {
+            return $res;
+        }
+        return ['success' => false, 'error' => $res['error'] ?? 'সেশন ক্লিয়ার কমান্ড ব্যর্থ হয়েছে।'];
+    }
+
+    /**
+     * WhatsApp পেয়ারিং কোড রিকোয়েস্ট করা (ক্যামেরা ছাড়া কোড দিয়ে কানেক্ট)
+     */
+    public function requestPairingCode(string $phone): array
+    {
+        $res = $this->request('POST', '/api/bot/request-code', [
+            'phoneNumber' => $phone
+        ], 12);
+        if ($res) {
+            return $res;
+        }
+        return ['success' => false, 'error' => 'পেয়ারিং কোড তৈরি করা যায়নি।'];
+    }
+
+    /**
      * সক্রিয় রিমাইন্ডার ও কাজসমূহ দেখা
      */
     public function getReminders(): array

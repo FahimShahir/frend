@@ -10,8 +10,9 @@ use App\Http\Controllers\FrendSettingsController;
 
 // রুট পেজে গেলে সরাসরি WhatsApp কন্ট্রোল সেন্টারে রিডাইরেক্ট হবে
 Route::get('/', function () {
-    return redirect('/admin/whatsapp');
+    return redirect()->route('admin.whatsapp.index');
 });
+Route::redirect('/admin', '/admin/whatsapp');
 
 Route::prefix('admin')->name('admin.')->middleware(['web'])->group(function () {
 
@@ -22,6 +23,8 @@ Route::prefix('admin')->name('admin.')->middleware(['web'])->group(function () {
         Route::post('/start', [FrendAdminController::class, 'start'])->name('start');
         Route::post('/restart', [FrendAdminController::class, 'restart'])->name('restart');
         Route::post('/logout', [FrendAdminController::class, 'logout'])->name('logout');
+        Route::post('/clear-session', [FrendAdminController::class, 'clearSession'])->name('clear-session');
+        Route::post('/request-code', [FrendAdminController::class, 'requestCode'])->name('request-code');
         Route::post('/send', [FrendAdminController::class, 'sendMessage'])->name('send');
     });
 

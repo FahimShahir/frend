@@ -295,6 +295,47 @@
             border: 1px solid rgba(245, 158, 11, 0.3);
         }
 
+        /* Top Navigation Header Tabs */
+        .header-nav-tabs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(17, 24, 39, 0.6);
+            backdrop-filter: var(--glass-blur);
+            padding: 8px 12px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 24px;
+            overflow-x: auto;
+            scrollbar-width: none;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        }
+        .header-nav-tabs::-webkit-scrollbar { display: none; }
+        .header-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 10px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+        }
+        .header-tab:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateY(-1px);
+        }
+        .header-tab.active {
+            color: #ffffff;
+            background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(139, 92, 246, 0.15));
+            border: 1px solid rgba(6, 182, 212, 0.4);
+            box-shadow: 0 2px 10px rgba(6, 182, 212, 0.2);
+        }
+
         @media (max-width: 900px) {
             .sidebar { width: 70px; padding: 16px 8px; }
             .brand-title, .brand-badge, .nav-text { display: none; }
@@ -306,11 +347,11 @@
 <body>
     <!-- Sidebar -->
     <aside class="sidebar">
-        <div class="brand-logo">
+        <a href="{{ route('admin.whatsapp.index') }}" class="brand-logo" style="text-decoration: none; cursor: pointer;">
             <div class="brand-icon">🤖</div>
             <div class="brand-title">FREND</div>
             <span class="brand-badge">Laravel</span>
-        </div>
+        </a>
 
         <ul class="nav-links">
             <li>
@@ -352,6 +393,25 @@
 
     <!-- Main Content -->
     <main class="main-wrapper">
+        <!-- Top Navigation Header Tabs (হেডারের সমস্ত পেজের লিংক) -->
+        <nav class="header-nav-tabs">
+            <a href="{{ route('admin.whatsapp.index') }}" class="header-tab {{ request()->routeIs('admin.whatsapp.*') ? 'active' : '' }}">
+                <span>📡</span> <span>WhatsApp কন্ট্রোল</span>
+            </a>
+            <a href="{{ route('admin.notes.index') }}" class="header-tab {{ request()->routeIs('admin.notes.*') ? 'active' : '' }}">
+                <span>📝</span> <span>নোট মেমোরি</span>
+            </a>
+            <a href="{{ route('admin.reminders.index') }}" class="header-tab {{ request()->routeIs('admin.reminders.*') ? 'active' : '' }}">
+                <span>⏰</span> <span>স্মার্ট রিমাইন্ডার</span>
+            </a>
+            <a href="{{ route('admin.migrations.index') }}" class="header-tab {{ request()->routeIs('admin.migrations.*') ? 'active' : '' }}">
+                <span>🐬</span> <span>মাইগ্রেশন ও ডেটাবেস</span>
+            </a>
+            <a href="{{ route('admin.settings.index') }}" class="header-tab {{ request()->routeIs('admin.settings.*') ? 'active' : '' }}">
+                <span>⚙️</span> <span>ওয়েব টার্মিনাল ও সেটিংস</span>
+            </a>
+        </nav>
+
         <div class="top-bar">
             <div>
                 <h1 class="page-title">@yield('page_title', 'ড্যাশবোর্ড')</h1>
@@ -363,7 +423,7 @@
                     <span id="globalStatusText">অনলাইন</span>
                 </div>
                 <div style="font-size: 13px; color: var(--text-muted);">
-                    🕒 {{ now('Asia/Dhaka')->format('h:i A') }} (ঢাকা)
+                    <a href="https://test330.xyz" target="_blank" style="color: var(--text-muted); text-decoration: none;" title="লাইভ ওয়েবসাইট খুলুন">🌐 test330.xyz</a>
                 </div>
             </div>
         </div>
@@ -385,6 +445,31 @@
         @yield('content')
     </main>
 
+    <script>
+        // গ্লোবাল স্ট্যাটাস সিঙ্ক (প্রতি ৬ সেকেন্ডে)
+        async function syncGlobalBotStatus() {
+            try {
+                const res = await fetch('{{ route("admin.whatsapp.status") }}');
+                const data = await res.json();
+                const pill = document.getElementById('globalStatusPill');
+                const txt = document.getElementById('globalStatusText');
+                if (!pill || !txt) return;
+
+                if (data.status === 'CONNECTED') {
+                    pill.className = 'status-pill';
+                    txt.innerText = 'অনলাইন (' + (data.userPhone || 'সক্রিয়') + ')';
+                } else if (data.status === 'OFFLINE') {
+                    pill.className = 'status-pill offline';
+                    txt.innerText = 'বট অফলাইন';
+                } else {
+                    pill.className = 'status-pill offline';
+                    txt.innerText = 'QR স্ক্যান প্রয়োজন';
+                }
+            } catch (_) {}
+        }
+        syncGlobalBotStatus();
+        setInterval(syncGlobalBotStatus, 6000);
+    </script>
     @yield('scripts')
 </body>
 </html>

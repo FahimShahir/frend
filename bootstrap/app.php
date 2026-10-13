@@ -14,14 +14,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'api/*',
             'cron/*',
-            'admin/settings/artisan',
-            'admin/settings/test-gemini',
-            'admin/settings/test-bot',
+            'admin/settings/*',
             'admin/migrations/*',
-            'admin/whatsapp/start',
-            'admin/whatsapp/restart',
-            'admin/whatsapp/logout',
-            'admin/whatsapp/send',
+            'admin/whatsapp/*',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

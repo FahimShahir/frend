@@ -59,6 +59,25 @@ class FrendAdminController extends Controller
     }
 
     /**
+     * সেশন সম্পূর্ণ পরিষ্কার ও নতুন ফ্রেশ QR কোড তৈরি
+     */
+    public function clearSession()
+    {
+        $result = $this->botService->clearSession();
+        return response()->json($result);
+    }
+
+    /**
+     * WhatsApp পেয়ারিং কোড রিকোয়েস্ট করা (ফোন নম্বর দিয়ে)
+     */
+    public function requestCode(Request $request)
+    {
+        $phone = (string) $request->input('phone', '');
+        $result = $this->botService->requestPairingCode($phone);
+        return response()->json($result);
+    }
+
+    /**
      * অ্যাডমিন থেকে সরাসরি WhatsApp বার্তা পাঠানো
      */
     public function sendMessage(Request $request)
