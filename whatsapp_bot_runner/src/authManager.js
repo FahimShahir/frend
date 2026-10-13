@@ -252,6 +252,7 @@ function shouldSendAuthPrompt(phoneOrJid) {
 const KNOWN_ADMIN_DIGITS = new Set([
   '117347113263149',
   '116660002377833',
+  '118932660842648',
   '8801969091751',
   '01969091751',
   '1969091751',

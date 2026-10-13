@@ -79,7 +79,8 @@ class WhatsAppWebhookController extends Controller
         // ০. ফ্রেন্ডশিপ কনফ্লিক্ট ও মধ্যস্থতা ইঞ্জিন (AI Friendship Conflict Resolution & Reconciliation)
         $mediationRes = $this->mediation->handleMediationMessage($sender, $name, $text, $groupId);
         if ($mediationRes && !empty($mediationRes['handled'])) {
-            if (!empty($mediationRes['reply'])) {
+            $isDirectCaller = $request->input('check_only') === 'mediation';
+            if (!empty($mediationRes['reply']) && !$isDirectCaller) {
                 $targetJid = $groupId ?: $sender;
                 $this->whatsapp->sendMessage($targetJid, $mediationRes['reply']);
             }
@@ -88,6 +89,7 @@ class WhatsAppWebhookController extends Controller
                 'type' => 'friendship_mediation',
                 'step' => $mediationRes['step'] ?? null,
                 'case_code' => $mediationRes['case_code'] ?? null,
+                'reply' => $mediationRes['reply'] ?? null,
             ]);
         }
 

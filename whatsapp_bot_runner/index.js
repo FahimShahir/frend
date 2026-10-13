@@ -189,7 +189,7 @@ function normalizeChatJid(jid) {
   return cleanDigits ? `${cleanDigits}@c.us` : cleanDevice;
 }
 
-const knownOwnerIds = new Set(['117347113263149', '116660002377833', '8801969091751', '01969091751', '1969091751']);
+const knownOwnerIds = new Set(['117347113263149', '116660002377833', '118932660842648', '8801969091751', '01969091751', '1969091751']);
 
 function getOwnerPhone() {
   const p = client.info?.wid?.user || webDashboard.getBotState().userPhone || process.env.OWNER_PHONE;
@@ -609,13 +609,16 @@ async function handleIncomingMsg(msg) {
 
       // Check if this message is part of an ongoing Friendship Mediation in Laravel (Party B outreach / response)!
       const laravelMediationRes = await forwardToLaravelWebhook({
-        sender: senderJid,
+        sender: normalizeChatJid(senderJid),
         message: rawText,
         name: client.info?.pushname || 'বন্ধু',
         check_only: 'mediation'
       });
       if (laravelMediationRes && laravelMediationRes.status === 'handled' && laravelMediationRes.type === 'friendship_mediation') {
         console.log(`🤝 [MEDIATION] Party B মেসেজ Laravel ফ্রেন্ডশিপ মিডিয়েশন দ্বারা প্রসেস হয়েছে [${laravelMediationRes.step || ''}]`);
+        if (laravelMediationRes.reply) {
+          await sendBotReply(msg, laravelMediationRes.reply);
+        }
         return;
       }
 
@@ -696,7 +699,7 @@ async function handleIncomingMsg(msg) {
       return;
     }
 
-    const ownerUserId = authUser.bound_phone || normalizeChatJid(senderJid);
+    const ownerUserId = normalizeChatJid(senderJid) || authUser.bound_phone;
     const ownerName = authUser.display_name || authUser.username || client.info?.pushname || 'User';
 
     // ── Voice Message ──
@@ -739,13 +742,16 @@ async function handleIncomingMsg(msg) {
 
       // Check Friendship Mediation / Conflict Resolution in Laravel first
       const laravelMediationRes = await forwardToLaravelWebhook({
-        sender: ownerUserId,
+        sender: normalizeChatJid(senderJid),
         message: msg.body,
         name: ownerName,
         check_only: 'mediation'
       });
       if (laravelMediationRes && laravelMediationRes.status === 'handled' && (laravelMediationRes.type === 'friendship_mediation' || laravelMediationRes.type === 'outgoing_message')) {
         console.log(`🤝 [MEDIATION] Laravel ফ্রেন্ডশিপ মিডিয়েশন সক্রিয় [ধাপ: ${laravelMediationRes.step || 'N/A'}]`);
+        if (laravelMediationRes.reply) {
+          await sendBotReply(msg, laravelMediationRes.reply);
+        }
         return;
       }
 

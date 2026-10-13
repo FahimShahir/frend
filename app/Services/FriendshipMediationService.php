@@ -953,6 +953,11 @@ class FriendshipMediationService
      */
     public function isFriendshipConflictIntent(string $text): bool
     {
+        // যদি মেসেজে ২টি বা ততোধিক ফোন নম্বর থাকে, তবে তা সরাসরি দুই বন্ধুর মধ্যস্থতার তথ্য হিসেবে গণ্য
+        if (count($this->extractAllPhoneNumbers($text)) >= 2) {
+            return true;
+        }
+
         $t = mb_strtolower($text, 'UTF-8');
         $conflictWords = '(?:ঝগড়া|ঝগড়া|ঝামেলা|মনোমালিন্য|রাগারাগি|কথা\s*বন্ধ|অভিমান|ভুল\s*বোঝাবুঝি|বিবাদ|কষ্ট|মারামারি|fight|conflict)';
         $friendWords = '(?:বন্ধু|বন্ধুর|দোস্ত|দোস্তের|ফ্রেন্ড|ফ্রেন্ডের|friend)';
