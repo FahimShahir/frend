@@ -26,6 +26,91 @@ class FriendshipMediationService
     }
 
     /**
+     * ফোন নম্বর নিখুঁতভাবে মেলানো (শেষ ৯ ডিজিট সাফিক্স তুলনা)
+     */
+    public function isPhoneMatch(string $phone1, ?string $phone2): bool
+    {
+        if (empty($phone2)) {
+            return false;
+        }
+        $c1 = preg_replace('/\D/', '', $phone1);
+        $c2 = preg_replace('/\D/', '', $phone2);
+        if ($c1 === $c2 && !empty($c1)) {
+            return true;
+        }
+        $t1 = strlen($c1) >= 9 ? substr($c1, -9) : $c1;
+        $t2 = strlen($c2) >= 9 ? substr($c2, -9) : $c2;
+        return (!empty($t1) && $t1 === $t2);
+    }
+
+    /**
+     * প্রেরকের ভূমিকা (Role) নির্ভুলভাবে নির্ধারণ
+     */
+    public function getParticipantRole(FriendshipMediation $med, string $senderPhone): ?string
+    {
+        if ($this->isPhoneMatch($senderPhone, $med->party_a_phone) || $this->isPhoneMatch($senderPhone, $med->party_a_id)) {
+            return 'party_a';
+        }
+        if ($this->isPhoneMatch($senderPhone, $med->party_b_phone)) {
+            return 'party_b';
+        }
+        if ($this->isPhoneMatch($senderPhone, $med->initiator_phone)) {
+            return 'initiator';
+        }
+        return null;
+    }
+
+    /**
+     * কথোপকথনের ধারাবাহিক স্মৃতি সংযোজন (কখনোই আগের বক্তব্য মোছা যাবে না)
+     */
+    public function appendStatement(FriendshipMediation $med, string $role, string $text, string $senderName): void
+    {
+        $timestamp = now()->setTimezone('Asia/Dhaka')->format('h:i A, d M');
+        $speaker = ($role === 'party_a') ? ($med->party_a_name ?: 'বন্ধু ১') : ($med->party_b_name ?: 'বন্ধু ২');
+        $entry = "[{$timestamp}] {$speaker}: {$text}";
+
+        if ($role === 'party_a') {
+            if (empty($med->party_a_statement)) {
+                $med->party_a_statement = $entry;
+            } else {
+                $med->party_a_statement .= "\n" . $entry;
+            }
+        } elseif ($role === 'party_b') {
+            if (empty($med->party_b_statement)) {
+                $med->party_b_statement = $entry;
+            } else {
+                $med->party_b_statement .= "\n" . $entry;
+            }
+        }
+        $med->save();
+    }
+
+    /**
+     * নির্দিষ্ট পক্ষের সাম্প্রতিক কথোপকথনের ইতিহাস উদ্ধার (AI Context-এর জন্য)
+     */
+    public function getPartyConversationHistory(FriendshipMediation $med, string $role): array
+    {
+        try {
+            $logs = FriendshipMediationLog::where('mediation_id', $med->id)
+                ->whereIn('sender_role', [$role, 'ai_mediator'])
+                ->orderBy('id', 'asc')
+                ->take(20)
+                ->get();
+
+            $history = [];
+            foreach ($logs as $log) {
+                $history[] = [
+                    'sender' => ($log->sender_role === 'ai_mediator') ? 'মিডিয়েটর' : (($role === 'party_a') ? ($med->party_a_name ?: 'বন্ধু ১') : ($med->party_b_name ?: 'বন্ধু ২')),
+                    'text' => $log->message_body,
+                ];
+            }
+            return $history;
+        } catch (Exception $e) {
+            return [];
+        }
+    }
+
+    /**
      * ইনকামিং মেসেজ কোনো মধ্যস্থতা কেসের অংশ কিনা যাচাই করে হ্যান্ডেল করা
      */
     public function handleMediationMessage(string $senderPhone, string $senderName, string $text, ?string $groupId = null): ?array
@@ -47,15 +132,11 @@ class FriendshipMediationService
         $activeMediation = FriendshipMediation::findActiveMediationFor($senderPhone);
 
         if ($activeMediation) {
-            $cleanA = preg_replace('/\D/', '', $activeMediation->party_a_phone ?? '');
-            $cleanB = preg_replace('/\D/', '', $activeMediation->party_b_phone ?? '');
+            $role = $this->getParticipantRole($activeMediation, $senderPhone);
 
-            $isPartyA = (strlen($cleanPhone) >= 9 && str_contains($cleanA, $cleanPhone)) || $activeMediation->party_a_phone === $senderPhone;
-            $isPartyB = (strlen($cleanPhone) >= 9 && str_contains($cleanB, $cleanPhone)) || $activeMediation->party_b_phone === $senderPhone;
-
-            if ($isPartyA) {
+            if ($role === 'party_a') {
                 return $this->processPartyAMessage($activeMediation, $senderPhone, $senderName, $text);
-            } elseif ($isPartyB) {
+            } elseif ($role === 'party_b') {
                 return $this->processPartyBMessage($activeMediation, $senderPhone, $senderName, $text);
             }
         }
@@ -295,7 +376,7 @@ class FriendshipMediationService
         $friendName = 'বন্ধু';
 
         if ($previousCase) {
-            $isPrevA = str_contains($previousCase->party_a_phone, $cleanSender);
+            $isPrevA = $this->isPhoneMatch($senderPhone, $previousCase->party_a_phone);
             if ($isPrevA) {
                 $friendPhone = $previousCase->party_b_phone;
                 $friendName = $previousCase->party_b_name ?: 'বন্ধু';
@@ -373,8 +454,8 @@ class FriendshipMediationService
         switch ($med->status) {
             case 'STEP_1_DUAL_FRIEND_OUTREACH':
                 // Party A (Friend 1) replied to the dual-friend outreach
-                $isRefusal = preg_match('/^(?:না|নো|no|stop)(?:[,।\s]|$)/iu', $clean)
-                          || preg_match('/(?:বিরক্ত\s*করবেন\s*না|কথা\s*বলব\s*না|কথা\s*বলতে\s*চাই\s*না|দরকার\s*নেই|leave\s*me\s*alone|চাই\s*না|যোগাযোগ\s*করবেন\s*না|মেসেজ\s*দিবেন\s*না)/iu', $clean);
+                $isRefusal = preg_match('/^(?:না|নো|no|stop|cancel)(?:[,।\s]|$)/iu', $clean)
+                          || preg_match('/(?:বিরক্ত\s*করবেন\s*না|কথা\s*(?:বলব|বলবো|বলতে\s*চাই)\s*না|যোগাযোগ\s*করবেন\s*না|মেসেজ\s*দিবেন\s*না|মধ্যস্থতা\s*চাই\s*না|leave\s*me\s*alone)/iu', $clean);
 
                 if ($isRefusal) {
                     $med->status = 'DECLINED_BY_FRIEND';
@@ -392,7 +473,8 @@ class FriendshipMediationService
                     return ['handled' => true, 'reply' => $partyAReply, 'step' => 'DECLINED_BY_FRIEND'];
                 }
 
-                $med->party_a_statement = $clean;
+                // Append statement to memory!
+                $this->appendStatement($med, 'party_a', $clean, $senderName);
                 $med->party_a_consent_contact = true;
                 $med->save();
 
@@ -402,26 +484,47 @@ class FriendshipMediationService
                     $med->status = 'STEP_5_ANALYZING_VIABILITY';
                     $med->save();
 
-                    $groupProposal = "🌸 আপনার কথাগুলো আমি গভীর মনোযোগ দিয়ে শুনেছি।\n\n"
-                                   . "আমি আপনাদের দুজনের বক্তব্য নিরপেক্ষভাবে বিশ্লেষণ করে দেখেছি যে মূলত কিছু ভুল বোঝাবুঝির কারণে এই দূরত্বের সৃষ্টি হয়েছে।\n\n"
-                                   . "🤝 *পুনর্মিলনের সম্ভাবনা:* আপনারা দুজনেই যদি শান্ত আলোচনার সুযোগ দেন, তবে একটি নিরাপদ WhatsApp গ্রুপে ভুল বোঝাবুঝি দূর করা সম্ভব।\n\n"
-                                   . "আপনি কি গ্রুপে শান্ত ও সৌহার্দ্যপূর্ণ আলোচনা করতে প্রস্তুত? প্রস্তুত থাকলে লিখুন: `হ্যাঁ রাজি`।";
+                    $analysisText = !empty($med->analysis_summary) ? $med->analysis_summary : "মূলত ভুল বোঝাবুঝি ও যোগাযোগের ঘাটতি থেকে দূরত্বের সৃষ্টি হয়েছে।";
+
+                    $groupProposal = "🌸 আপনার মনের কথাগুলো আমি অত্যন্ত গভীর মনোযোগ ও শ্রদ্ধার সাথে অনুধাবন করেছি।\n\n"
+                                   . "🔍 *আমাদের নিরপেক্ষ মনস্তাত্ত্বিক পর্যবেক্ষণ:*\n{$analysisText}\n\n"
+                                   . "🤝 *পুনর্মিলনের সুযোগ:*\n"
+                                   . "আপনাদের দুজনের বক্তব্যই স্পষ্ট করে যে অতীতের সুন্দর সম্পর্কের গভীর টান এখনও আপনাদের দুজনের মনেই বিদ্যমান। কেবল সাময়িক ভুল বোঝাবুঝির কারণে এই দূরত্ব তৈরি হয়েছে।\n\n"
+                                   . "আমরা কি একটি নিরাপদ ও শান্ত WhatsApp গ্রুপে আপনাদের দুজনকে নিয়ে একটি গঠনমূলক ও সম্মানজনক আলোচনা শুরু করতে পারি? আমি নিজে সেখানে নিরপেক্ষ মিডিয়েটর হিসেবে আপনাদের সহায়তা করব।\n\n"
+                                   . "আপনি কি গ্রুপে শান্ত আলোচনার সুযোগ দিতে প্রস্তুত? প্রস্তুত থাকলে লিখুন: `হ্যাঁ রাজি`।";
 
                     $this->whatsapp->sendMessage($med->party_b_phone, $groupProposal);
+                    $this->logMessage($med->id, 'STEP_5', $med->party_b_phone, 'ai_mediator', $groupProposal);
 
-                    $this->logMessage($med->id, 'STEP_5', null, 'ai_mediator', $groupProposal);
+                    $this->logMessage($med->id, 'STEP_5', $senderPhone, 'ai_mediator', $groupProposal);
                     return ['handled' => true, 'reply' => $groupProposal, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
                 } else {
                     $f2Disp = $this->formatDisplayPhone($med->party_b_phone);
-                    $waitReply = "🤝 ধন্যবাদ আপনার অনুভূতিগুলো শেয়ার করার জন্য। আমি খুব গভীর মনোযোগ দিয়ে আপনার কথাগুলো বুঝেছি।\n\n"
-                               . "আমি আপনার অপর বন্ধু ({$f2Disp})-এর উত্তরের অপেক্ষায় আছি। ওনার বক্তব্য পাওয়ার পর আমি দুজনকেই পরবর্তী পদক্ষেপ জানাব। শান্ত হয়ে একটু অপেক্ষা করুন। 🕊️";
-                    $this->logMessage($med->id, 'STEP_1_DUAL', null, 'ai_mediator', $waitReply);
-                    return ['handled' => true, 'reply' => $waitReply, 'step' => 'STEP_1_DUAL_FRIEND_OUTREACH'];
+                    $systemPrompt = "তুমি 'FREND' — একজন নিরপেক্ষ, সহানুভূতিশীল এবং উচ্চ মানসিক বুদ্ধিমত্তা সম্পন্ন (High EQ) ফ্রেন্ডশিপ মিডিয়েটর ও রিলেশনশিপ কাউন্সিলর।\n"
+                                  . "বর্তমানে তুমি বন্ধু ১ ({$med->party_a_name})-এর সাথে ব্যক্তিগতভাবে কথা বলছো।\n\n"
+                                  . "পরিস্থিতি:\n"
+                                  . "দুই বন্ধুর মধ্যে ভুল বোঝাবুঝি বা মনোমালিন্য চলছে। বন্ধু ১ তার মনের কথা বা কষ্টের কথা বলছে। অপর বন্ধু ({$f2Disp})-এর কাছে নিরপেক্ষ বার্তা পাঠানো হয়েছে, তবে উনি এখনো উত্তর দেননি।\n\n"
+                                  . "তোমার দায়িত্ব:\n"
+                                  . "১. বন্ধু ১-এর অনুভূতি ও আবেগকে আন্তরিক স্বীকৃতি (Emotional Validation) দাও।\n"
+                                  . "২. কোনো পক্ষপাত করবে না, কাউকে দোষারোপ করবে না। অপর বন্ধুর কোনো গোপনীয়তা প্রকাশ করবে না।\n"
+                                  . "৩. আশ্বস্ত করো যে তার প্রতিটি বক্তব্য সুরক্ষিত রাখা হয়েছে এবং আমরা অপর বন্ধুর উত্তরের অপেক্ষায় আছি যাতে সুন্দর সমাধান তৈরি করা যায়।\n"
+                                  . "৪. বন্ধু ১ যদি কোনো প্রশ্ন করে বা সংশয় প্রকাশ করে, অত্যন্ত মার্জিত, প্রজ্ঞাবান ও আশ্বস্তকারী ভাষায় উত্তর দাও।\n"
+                                  . "৫. উত্তর ২-৩ বাক্যে, অত্যন্ত উষ্ণ, আন্তরিক ও সাবলীল বাংলায় দাও।";
+
+                    $history = $this->getPartyConversationHistory($med, 'party_a');
+                    $aiReply = $this->gemini->generateMediationReply($systemPrompt, $clean, $history);
+
+                    if (empty($aiReply)) {
+                        $aiReply = "🤝 ধন্যবাদ আপনার অনুভূতিগুলো শেয়ার করার জন্য। আমি খুব গভীর মনোযোগ দিয়ে আপনার প্রতিটি কথা বুঝেছি ও সুরক্ষিত রেখেছি।\n\n"
+                                 . "আমি আপনার অপর বন্ধু ({$f2Disp})-এর উত্তরের অপেক্ষায় আছি। ওনার বক্তব্য পাওয়ার পর আমি নিরপেক্ষ সমাধানের পথ তৈরি করব। শান্ত হয়ে একটু অপেক্ষা করুন। 🕊️";
+                    }
+
+                    $this->logMessage($med->id, 'STEP_1_DUAL', $senderPhone, 'ai_mediator', $aiReply);
+                    return ['handled' => true, 'reply' => $aiReply, 'step' => 'STEP_1_DUAL_FRIEND_OUTREACH'];
                 }
 
             case 'STEP_1_LISTENING_PARTY_A':
-                // Party A পরিস্থিতি বুঝিয়ে বলল, এবার বন্ধুর নম্বর ও সম্মতি চাওয়ার ধাপ (Step 2)
-                $med->party_a_statement .= "\n• " . $clean;
+                $this->appendStatement($med, 'party_a', $clean, $senderName);
 
                 // টেক্সটে কোনো ফোন নম্বর আছে কি?
                 $extractedPhone = $this->extractPhoneNumber($clean);
@@ -431,7 +534,7 @@ class FriendshipMediationService
                     $med->save();
 
                     $reply = "আমি পুরো বিষয়টি বুঝতে পেরেছি {$med->party_a_name}। তোমার অনুভূতিগুলোর মূল্য অনেক।\n\n"
-                           . "তুমি বন্ধুর নম্বর ({$extractedPhone}) দিয়েছো। তবে তোমার স্পষ্ট সম্মতি ছাড়া আমি ওনাকে কোনো মেসেজ পাঠাবো না।\n\n"
+                           . "তুমি বন্ধুর নম্বর (" . $this->formatDisplayPhone($extractedPhone) . ") দিয়েছো। তবে তোমার স্পষ্ট সম্মতি ছাড়া আমি ওনাকে কোনো মেসেজ পাঠাবো না।\n\n"
                            . "📌 *আমি কি ওনার সাথে অত্যন্ত ভদ্র ও নিরপেক্ষভাবে যোগাযোগ করে ওনার দিকটি শুনতে পারি?*\n"
                            . "যদি তুমি রাজি থাকো, তবে লিখুন: `হ্যাঁ পাঠাও` বা `সম্মতি দিচ্ছি`।";
 
@@ -439,28 +542,36 @@ class FriendshipMediationService
                     return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_2_REQUEST_FRIEND_CONTACT'];
                 }
 
-                // যদি আগের কেস থেকে বা ইতিমধ্যে বন্ধুর নম্বর সংরক্ষিত থাকে
                 if (!empty($med->party_b_phone)) {
                     $med->status = 'STEP_2_REQUEST_FRIEND_CONTACT';
                     $med->save();
 
                     $reply = "আমি তোমার বর্তমান মানসিক অবস্থা ও অনুভূতিগুলো খুব গভীর মনোযোগ দিয়ে বুঝেছি {$med->party_a_name}।\n\n"
-                           . "তোমার বন্ধু *{$med->party_b_name}* ({$med->party_b_phone})-এর কাছে কি আমি নতুনভাবে অত্যন্ত মার্জিত ও নিরপেক্ষ একটি যোগাযোগের আমন্ত্রণ পাঠাব?\n\n"
+                           . "তোমার বন্ধু *{$med->party_b_name}* (" . $this->formatDisplayPhone($med->party_b_phone) . ")-এর কাছে কি আমি নতুনভাবে অত্যন্ত মার্জিত ও নিরপেক্ষ একটি যোগাযোগের আমন্ত্রণ পাঠাব?\n\n"
                            . "🔒 *তোমার স্পষ্ট সম্মতি প্রয়োজন:* তোমার স্পষ্ট অনুমতি ছাড়া আমি ওনাকে কোনো মেসেজ পাঠাব না। তুমি রাজি থাকলে লিখুন: `হ্যাঁ পাঠাও`।";
 
                     $this->logMessage($med->id, 'STEP_2', null, 'ai_mediator', $reply);
                     return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_2_REQUEST_FRIEND_CONTACT'];
                 }
 
-                $med->status = 'STEP_2_REQUEST_FRIEND_CONTACT';
-                $med->save();
+                $systemPrompt = "তুমি 'FREND' — একজন নিরপেক্ষ, সংবেদনশীল ফ্রেন্ডশিপ মিডিয়েটর।\n"
+                              . "ব্যবহারকারী বন্ধু তার কষ্ট ও ক্ষোভ শেয়ার করছে।\n"
+                              . "১. তার অনুভূতির প্রতি আন্তরিক সহমর্মিতা প্রকাশ করো।\n"
+                              . "২. তাকে জানাও যে অপর বন্ধুর সাথে কথা বলে ভুল বোঝাবুঝি দূর করার জন্য বন্ধুর WhatsApp নম্বর প্রয়োজন।\n"
+                              . "৩. তাকে আশ্বস্ত করো যে নম্বর দিলেও তার অনুমতি ছাড়া বার্তা পাঠানো হবে না।\n"
+                              . "৪. উত্তর ২-৩ বাক্যে, অত্যন্ত উষ্ণ ও সহানুভূতিশীল বাংলায় দাও।";
 
-                $reply = "তোমার অনুভূতি ও কষ্টের জায়গাটি আমি পরিষ্কারভাবে বুঝতে পারছি {$med->party_a_name}।\n\n"
-                       . "যদি তুমি চাও আমি একজন নিরপেক্ষ মধ্যস্থতাকারী হিসেবে তোমাদের মধ্যে কথা বলে ভুল বোঝাবুঝি দূর করার চেষ্টা করি, তবে তোমার বন্ধুর WhatsApp নম্বরটি আমাকে দাও (যেমন: `017xxxxxxxx`)।\n\n"
-                       . "_নম্বর দেওয়ার পর তোমার স্পষ্ট অনুমতি ছাড়া আমি ওনাকে কোনো মেসেজ পাঠাব না।_";
+                $history = $this->getPartyConversationHistory($med, 'party_a');
+                $aiListening = $this->gemini->generateMediationReply($systemPrompt, $clean, $history);
 
-                $this->logMessage($med->id, 'STEP_2', null, 'ai_mediator', $reply);
-                return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_2_REQUEST_FRIEND_CONTACT'];
+                if (empty($aiListening)) {
+                    $aiListening = "তোমার অনুভূতি ও কষ্টের জায়গাটি আমি পরিষ্কারভাবে বুঝতে পারছি {$med->party_a_name}।\n\n"
+                                 . "যদি তুমি চাও আমি একজন নিরপেক্ষ মধ্যস্থতাকারী হিসেবে তোমাদের মধ্যে কথা বলে ভুল বোঝাবুঝি দূর করার চেষ্টা করি, তবে তোমার বন্ধুর WhatsApp নম্বরটি আমাকে দাও (যেমন: `017xxxxxxxx`)।\n\n"
+                                 . "_নম্বর দেওয়ার পর তোমার স্পষ্ট অনুমতি ছাড়া আমি ওনাকে কোনো মেসেজ পাঠাব না।_";
+                }
+
+                $this->logMessage($med->id, 'STEP_1', null, 'ai_mediator', $aiListening);
+                return ['handled' => true, 'reply' => $aiListening, 'step' => 'STEP_1_LISTENING_PARTY_A'];
 
             case 'STEP_2_REQUEST_FRIEND_CONTACT':
                 // ফোন নম্বর বা সম্মতির অপেক্ষা
@@ -469,14 +580,13 @@ class FriendshipMediationService
                     $med->party_b_phone = $extractedPhone;
                     $med->save();
 
-                    $reply = "বন্ধুর নম্বর ({$extractedPhone}) নথিভুক্ত হয়েছে।\n\n"
+                    $reply = "বন্ধুর নম্বর (" . $this->formatDisplayPhone($extractedPhone) . ") নথিভুক্ত হয়েছে।\n\n"
                            . "🔒 *যোগাযোগের অনুমতি:* আমি কি ওনাকে একটি ব্যক্তিগত ও নিরপেক্ষ আমন্ত্রণ পাঠাব? আপনি রাজি থাকলে বলুন: `হ্যাঁ পাঠাও`।";
 
                     $this->logMessage($med->id, 'STEP_2', null, 'ai_mediator', $reply);
                     return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_2_REQUEST_FRIEND_CONTACT'];
                 }
 
-                // সম্মতি দিলে Step 3 কার্যকর করা (বন্ধুর সঙ্গে ব্যক্তিগত যোগাযোগ)
                 if (preg_match('/(?:হ্যাঁ|হ্যা|পাঠাও|সম্মতি|yes|ok|agree|পাঠিয়ে\s*দাও)/iu', $clean)) {
                     if (empty($med->party_b_phone)) {
                         return [
@@ -490,10 +600,9 @@ class FriendshipMediationService
                     $med->status = 'STEP_3_CONTACT_PARTY_B';
                     $med->save();
 
-                    // Step 3: বন্ধুকে নিরপেক্ষ ও ব্যক্তিগত মেসেজ প্রেরণ
                     $this->sendInitialOutreachToPartyB($med);
 
-                    $reply = "✅ তোমার সম্মতিক্রমে আমি তোমার বন্ধু ({$med->party_b_phone})-এর কাছে অত্যন্ত ভদ্র ও নিরপেক্ষ একটি বার্তা পাঠিয়েছি।\n\n"
+                    $reply = "✅ তোমার সম্মতিক্রমে আমি তোমার বন্ধু (" . $this->formatDisplayPhone($med->party_b_phone) . ")-এর কাছে অত্যন্ত ভদ্র ও নিরপেক্ষ একটি বার্তা পাঠিয়েছি।\n\n"
                            . "আমি ওনাকে কোনো চাপ দেইনি; কেবল ওনার বক্তব্য শোনার সুযোগ দিয়েছি। উনি সাড়া দিলে আমি ওনার অনুভূতিগুলো শুনবো এবং তোমাকে জানাবো। শান্ত হয়ে একটু অপেক্ষা করো। 🤝";
 
                     $this->logMessage($med->id, 'STEP_3', null, 'ai_mediator', $reply);
@@ -507,8 +616,7 @@ class FriendshipMediationService
                 ];
 
             case 'STEP_5_ANALYZING_VIABILITY':
-                // গ্রুপ মধ্যস্থতার জন্য Party A-এর সম্মতি
-                if (preg_match('/(?:হ্যাঁ|রাজি|গ্রুপ|yes|agree)/iu', $clean)) {
+                if (preg_match('/(?:হ্যাঁ|রাজি|গ্রুপ|yes|agree|ok|সম্মতি|নিশ্চয়ই)/iu', $clean)) {
                     $med->party_a_consent_group = true;
                     $med->save();
 
@@ -516,19 +624,51 @@ class FriendshipMediationService
                         return $this->launchGroupMediationSession($med, 1);
                     }
 
+                    $waitReply = "🌸 আপনার আন্তরিক সদিচ্ছা ও সম্মতির জন্য ধন্যবাদ! আমি আপনার বন্ধু (" . $this->formatDisplayPhone($med->party_b_phone) . ")-এর সম্মতির অপেক্ষায় আছি। উনি সম্মতি দেওয়া মাত্রই আমাদের শান্ত ও নিরাপদ মধ্যস্থতা গ্রুপে আলোচনা শুরু হবে। 🕊️";
+                    $this->logMessage($med->id, 'STEP_5', $senderPhone, 'ai_mediator', $waitReply);
                     return [
                         'handled' => true,
-                        'reply' => "তোমার সম্মতি পেয়েছি! আমি তোমার বন্ধুর সম্মতির অপেক্ষায় আছি। উনি রাজি হওয়া মাত্রই গ্রুপে শান্তিপূর্ণ আলোচনা শুরু হবে।",
+                        'reply' => $waitReply,
                         'step' => 'STEP_5_ANALYZING_VIABILITY'
                     ];
                 }
-                break;
+
+                $isRefusalStep5 = preg_match('/^(?:না|নো|no|stop|cancel)(?:[,।\s]|$)/iu', $clean)
+                    || preg_match('/(?:গ্রুপে\s*যাব\s*না|গ্রুপে\s*বসতে\s*চাই\s*না|গ্রুপ\s*(?:চাই\s*না|দরকার\s*নেই)|আলোচনা\s*চাই\s*না)/iu', $clean);
+                if ($isRefusalStep5) {
+                    $med->status = 'DECLINED_BY_FRIEND';
+                    $med->is_terminated = true;
+                    $med->closure_reason = 'PARTY_A_DECLINED_GROUP';
+                    $med->save();
+
+                    $declineReply = "আপনার সিদ্ধান্তকে শ্রদ্ধা জানাচ্ছি। কোনো বিষয়ে কাউকে বাধ্য করা আমাদের উদ্দেশ্য নয়। আপনার সুন্দর ও শান্তিময় জীবন কামনা করি। 🌸";
+                    $this->whatsapp->sendMessage($senderPhone, $declineReply);
+
+                    if (!empty($med->party_b_phone)) {
+                        $this->whatsapp->sendMessage($med->party_b_phone, "ℹ️ আপনার বন্ধু এই মুহূর্তে গ্রুপ আলোচনায় বসতে প্রস্তুত নন। ওনার সিদ্ধান্তকে সম্মান জানিয়ে মধ্যস্থতা স্থগিত করা হয়েছে।");
+                    }
+                    return ['handled' => true, 'reply' => $declineReply, 'step' => 'DECLINED_BY_FRIEND'];
+                }
+
+                $step5Prompt = "তুমি 'FREND' নিরপেক্ষ ফ্রেন্ডশিপ মিডিয়েটর। দুই বন্ধুকে একটি নিরাপদ মীমাংসা গ্রুপে নেওয়ার প্রস্তুতি চলছে।\n"
+                             . "বন্ধু ১ ({$med->party_a_name}) গ্রুপ মধ্যস্থতা নিয়ে সংশয় বা প্রশ্ন প্রকাশ করেছে: \"{$clean}\"\n\n"
+                             . "তোমার দায়িত্ব:\n"
+                             . "১. তাকে আশ্বস্ত করো যে গ্রুপে আমি নিজে মধ্যস্থতাকারী হিসেবে উপস্থিত থাকব এবং কোনো অসৌজন্যমূলক আচরণ বা কটু কথা বলতে দেওয়া হবে না।\n"
+                             . "২. আলোচনাটি অত্যন্ত সম্মানজনক ও সৌহার্দ্যপূর্ণ হবে।\n"
+                             . "৩. তাকে সাহস ও উৎসাহ দাও যাতে অতীতের সুন্দর বন্ধুত্বের খাতিরে সে একবার শান্ত আলোচনায় বসে।\n"
+                             . "৪. তাকে স্মরণ করিয়ে দাও যে যদি সে প্রস্তুত থাকে তবে যেন `হ্যাঁ রাজি` লিখে জানায়।\n"
+                             . "৫. উত্তর ২-৩ বাক্যে, অত্যন্ত বিনম্র ও আশ্বস্তকারী বাংলায় দাও।";
+
+                $history = $this->getPartyConversationHistory($med, 'party_a');
+                $step5Reply = $this->gemini->generateMediationReply($step5Prompt, $clean, $history);
+                if (empty($step5Reply)) {
+                    $step5Reply = "গ্রুপে আমি নিজে উপস্থিত থেকে আলোচনা পরিচালনা করব, যাতে কোনো প্রকার কটু কথা বা তর্ক না হয়। আপনারা নিরাপদে শান্তভাবে কথা বলতে পারবেন। আপনি প্রস্তুত থাকলে বলুন: `হ্যাঁ রাজি`। 🤝";
+                }
+                $this->logMessage($med->id, 'STEP_5', $senderPhone, 'ai_mediator', $step5Reply);
+                return ['handled' => true, 'reply' => $step5Reply, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
 
             case 'STEP_7_MEMBER_LEFT_ATTEMPT_1':
-                // প্রথমবার কেউ গ্রুপ ছাড়লে Leaver ও Remaining আলাদা হ্যান্ডলিং
-                $cleanLeaver = preg_replace('/\D/', '', $med->first_leaver_phone ?? '');
-                $cleanSender = preg_replace('/\D/', '', $senderPhone);
-                $isLeaver = $cleanLeaver && str_contains($cleanSender, $cleanLeaver);
+                $isLeaver = $this->isPhoneMatch($senderPhone, $med->first_leaver_phone);
 
                 if ($isLeaver) {
                     if (preg_match('/(?:হ্যাঁ|হ্যা|রাজি|আরেকবার|চেষ্টা|yes|ok|try)/iu', $clean)) {
@@ -552,7 +692,7 @@ class FriendshipMediationService
 
         return [
             'handled' => true,
-            'reply' => "আমি তোমার বক্তব্যটি নথিভুক্ত করেছি। মধ্যস্থতার বর্তমান পর্যায়: " . $this->getHumanStageName($med->status),
+            'reply' => "আমি তোমার বক্তব্যটি সুরক্ষিত রেখেছি। মধ্যস্থতার বর্তমান পর্যায়: " . $this->getHumanStageName($med->status),
             'step' => $med->status
         ];
     }
@@ -566,8 +706,8 @@ class FriendshipMediationService
         $clean = trim($text);
 
         // যদি Party B যোগাযোগ প্রত্যাখ্যান করে বা বিরক্ত না করতে বলে (No Harassment Rule)
-        $isRefusal = preg_match('/^(?:না|নো|no|stop)(?:[,।\s]|$)/iu', $clean)
-                  || preg_match('/(?:বিরক্ত\s*করবেন\s*না|কথা\s*বলব\s*না|কথা\s*বলতে\s*চাই\s*না|দরকার\s*নেই|leave\s*me\s*alone|চাই\s*না|যোগাযোগ\s*করবেন\s*না|মেসেজ\s*দিবেন\s*না)/iu', $clean);
+        $isRefusal = preg_match('/^(?:না|নো|no|stop|cancel)(?:[,।\s]|$)/iu', $clean)
+                  || preg_match('/(?:বিরক্ত\s*করবেন\s*না|কথা\s*(?:বলব|বলবো|বলতে\s*চাই)\s*না|যোগাযোগ\s*করবেন\s*না|মেসেজ\s*দিবেন\s*না|মধ্যস্থতা\s*চাই\s*না|leave\s*me\s*alone)/iu', $clean);
 
         if ($isRefusal) {
             $med->status = 'DECLINED_BY_FRIEND';
@@ -575,11 +715,9 @@ class FriendshipMediationService
             $med->closure_reason = 'FRIEND_DECLINED_COMMUNICATION';
             $med->save();
 
-            // বন্ধুকে সম্মানজনক বিদায় বার্তা
             $partyBReply = "আপনার সিদ্ধান্তকে আমি সম্পূর্ণ শ্রদ্ধা জানাচ্ছি। আপনাকে আর কোনো মেসেজ বা যোগাযোগ করা হবে না। আপনার সুন্দর ও শান্তিময় জীবন কামনা করি। ভালো থাকবেন। 🌸";
             $this->whatsapp->sendMessage($senderPhone, $partyBReply);
 
-            // Party A-কে ফলাফল জানানো
             $partyANotice = "ℹ️ {$med->party_a_name}, তোমার বন্ধু এই মুহূর্তে কথা বলতে অনিচ্ছুক এবং ওনার সিদ্ধান্তকে আমাদের সম্মান জানানো উচিত।\n"
                           . "কোনো সম্পর্কে জোর করা যায় না। তাই আমি এই পুনর্মিলন প্রক্রিয়াটি সমাপ্ত করেছি। ওনাকে একটু সময় দাও, হয়তো পরে উনি নিজেই শান্ত হবেন।";
             $this->whatsapp->sendMessage($med->party_a_phone, $partyANotice);
@@ -589,7 +727,7 @@ class FriendshipMediationService
 
         // Step 1 Dual: Party B (Friend 2) responded to the dual-friend outreach!
         if ($med->status === 'STEP_1_DUAL_FRIEND_OUTREACH') {
-            $med->party_b_statement = $clean;
+            $this->appendStatement($med, 'party_b', $clean, $senderName);
             $med->party_b_consent_chat = true;
             $med->save();
 
@@ -599,21 +737,43 @@ class FriendshipMediationService
                 $med->status = 'STEP_5_ANALYZING_VIABILITY';
                 $med->save();
 
-                $groupProposal = "🌸 আপনার কথাগুলো আমি গভীর মনোযোগ দিয়ে শুনেছি।\n\n"
-                               . "আমি আপনাদের দুজনের বক্তব্য নিরপেক্ষভাবে বিশ্লেষণ করে দেখেছি যে মূলত কিছু ভুল বোঝাবুঝির কারণে এই দূরত্বের সৃষ্টি হয়েছে।\n\n"
-                               . "🤝 *পুনর্মিলনের সম্ভাবনা:* আপনারা দুজনেই যদি শান্ত আলোচনার সুযোগ দেন, তবে একটি নিরাপদ WhatsApp গ্রুপে ভুল বোঝাবুঝি দূর করা সম্ভব।\n\n"
-                               . "আপনি কি গ্রুপে শান্ত ও সৌহার্দ্যপূর্ণ আলোচনা করতে প্রস্তুত? প্রস্তুত থাকলে লিখুন: `হ্যাঁ রাজি`।";
+                $analysisText = !empty($med->analysis_summary) ? $med->analysis_summary : "মূলত ভুল বোঝাবুঝি ও যোগাযোগের ঘাটতি থেকে দূরত্বের সৃষ্টি হয়েছে।";
+
+                $groupProposal = "🌸 আপনার মনের কথাগুলো আমি অত্যন্ত গভীর মনোযোগ ও শ্রদ্ধার সাথে অনুধাবন করেছি।\n\n"
+                               . "🔍 *আমাদের নিরপেক্ষ মনস্তাত্ত্বিক পর্যবেক্ষণ:*\n{$analysisText}\n\n"
+                               . "🤝 *পুনর্মিলনের সুযোগ:*\n"
+                               . "আপনাদের দুজনের বক্তব্যই স্পষ্ট করে যে অতীতের সুন্দর সম্পর্কের গভীর টান এখনও আপনাদের দুজনের মনেই বিদ্যমান। কেবল সাময়িক ভুল বোঝাবুঝির কারণে এই দূরত্ব তৈরি হয়েছে।\n\n"
+                               . "আমরা কি একটি নিরাপদ ও শান্ত WhatsApp গ্রুপে আপনাদের দুজনকে নিয়ে একটি গঠনমূলক ও সম্মানজনক আলোচনা শুরু করতে পারি? আমি নিজে সেখানে নিরপেক্ষ মিডিয়েটর হিসেবে আপনাদের সহায়তা করব।\n\n"
+                               . "আপনি কি গ্রুপে শান্ত আলোচনার সুযোগ দিতে প্রস্তুত? প্রস্তুত থাকলে লিখুন: `হ্যাঁ রাজি`।";
 
                 $this->whatsapp->sendMessage($med->party_a_phone, $groupProposal);
+                $this->logMessage($med->id, 'STEP_5', $med->party_a_phone, 'ai_mediator', $groupProposal);
 
-                $this->logMessage($med->id, 'STEP_5', null, 'ai_mediator', $groupProposal);
+                $this->logMessage($med->id, 'STEP_5', $senderPhone, 'ai_mediator', $groupProposal);
                 return ['handled' => true, 'reply' => $groupProposal, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
             } else {
                 $f1Disp = $this->formatDisplayPhone($med->party_a_phone);
-                $waitReply = "🤝 ধন্যবাদ আপনার অনুভূতিগুলো শেয়ার করার জন্য। আমি খুব গভীর মনোযোগ দিয়ে আপনার কথাগুলো বুঝেছি।\n\n"
-                           . "আমি আপনার অপর বন্ধু ({$f1Disp})-এর উত্তরের অপেক্ষায় আছি। ওনার বক্তব্য পাওয়ার পর আমি দুজনকেই পরবর্তী পদক্ষেপ জানাব। শান্ত হয়ে একটু অপেক্ষা করুন। 🕊️";
-                $this->logMessage($med->id, 'STEP_1_DUAL', null, 'ai_mediator', $waitReply);
-                return ['handled' => true, 'reply' => $waitReply, 'step' => 'STEP_1_DUAL_FRIEND_OUTREACH'];
+                $systemPrompt = "তুমি 'FREND' — একজন নিরপেক্ষ, সহানুভূতিশীল এবং উচ্চ মানসিক বুদ্ধিমত্তা সম্পন্ন (High EQ) ফ্রেন্ডশিপ মিডিয়েটর ও রিলেশনশিপ কাউন্সিলর।\n"
+                              . "বর্তমানে তুমি বন্ধু ২ ({$med->party_b_name})-এর সাথে ব্যক্তিগতভাবে কথা বলছো।\n\n"
+                              . "পরিস্থিতি:\n"
+                              . "দুই বন্ধুর মধ্যে ভুল বোঝাবুঝি বা মনোমালিন্য চলছে। বন্ধু ২ তার মনের কথা বা কষ্টের কথা বলছে। অপর বন্ধু ({$f1Disp})-এর বক্তব্য এখনো অপেক্ষমাণ।\n\n"
+                              . "তোমার দায়িত্ব:\n"
+                              . "১. বন্ধু ২-এর অনুভূতি ও আবেগকে আন্তরিক স্বীকৃতি (Emotional Validation) দাও।\n"
+                              . "২. কোনো পক্ষপাত করবে না, কাউকে দোষারোপ করবে না। অপর বন্ধুর কোনো গোপনীয়তা প্রকাশ করবে না।\n"
+                              . "৩. আশ্বস্ত করো যে তার প্রতিটি বক্তব্য সুরক্ষিত রাখা হয়েছে এবং আমরা অপর বন্ধুর বক্তব্যের অপেক্ষায় আছি যাতে সুন্দর সমাধান তৈরি করা যায়।\n"
+                              . "৪. বন্ধু ২ যদি কোনো প্রশ্ন করে বা সংশয় প্রকাশ করে, অত্যন্ত মার্জিত, প্রজ্ঞাবান ও আশ্বস্তকারী ভাষায় উত্তর দাও।\n"
+                              . "৫. উত্তর ২-৩ বাক্যে, অত্যন্ত উষ্ণ, আন্তরিক ও সাবলীল বাংলায় দাও।";
+
+                $history = $this->getPartyConversationHistory($med, 'party_b');
+                $aiReply = $this->gemini->generateMediationReply($systemPrompt, $clean, $history);
+
+                if (empty($aiReply)) {
+                    $aiReply = "🤝 ধন্যবাদ আপনার অনুভূতিগুলো শেয়ার করার জন্য। আমি খুব গভীর মনোযোগ দিয়ে আপনার প্রতিটি কথা বুঝেছি ও সুরক্ষিত রেখেছি।\n\n"
+                             . "আমি আপনার অপর বন্ধু ({$f1Disp})-এর উত্তরের অপেক্ষায় আছি। ওনার বক্তব্য পাওয়ার পর আমি নিরপেক্ষ সমাধানের পথ তৈরি করব। শান্ত হয়ে একটু অপেক্ষা করুন। 🕊️";
+                }
+
+                $this->logMessage($med->id, 'STEP_1_DUAL', $senderPhone, 'ai_mediator', $aiReply);
+                return ['handled' => true, 'reply' => $aiReply, 'step' => 'STEP_1_DUAL_FRIEND_OUTREACH'];
             }
         }
 
@@ -633,26 +793,30 @@ class FriendshipMediationService
 
         // Step 4: Party B তার বক্তব্য জানালো
         if ($med->status === 'STEP_4_LISTENING_PARTY_B') {
-            $med->party_b_statement = $clean;
+            $this->appendStatement($med, 'party_b', $clean, $senderName);
             $med->status = 'STEP_5_ANALYZING_VIABILITY';
             $med->save();
 
-            // উভয় পক্ষের বক্তব্য নিরপেক্ষ বিশ্লেষণ করা (Step 4 & 5)
             $this->performDualPerspectiveAnalysis($med);
 
-            $reply = "আপনার কথাগুলো অত্যন্ত মূল্যবান এবং আমি আপনার অনুভূতিগুলো গভীর শ্রদ্ধার সাথে অনুধাবন করেছি।\n\n"
-                   . "আমি উভয় পক্ষের বক্তব্য বিশ্লেষণ করে দেখেছি যে মূলত কিছু ভুল বোঝাবুঝি ও আবেগের কারণে এই দূরত্বের সৃষ্টি হয়েছে।\n\n"
-                   . "🤝 *পুনর্মিলনের সম্ভাবনা:* {$med->party_a_name} আন্তরিকভাবে সব ভুল বোঝাবুঝি দূর করতে চায়।\n\n"
-                   . "আমরা কি একটি নিরাপদ WhatsApp গ্রুপে আপনাদের দুজনকে নিয়ে একটি গঠনমূলক ও শান্ত আলোচনা শুরু করতে পারি?\n"
-                   . "আপনি রাজি থাকলে লিখুন: `হ্যাঁ রাজি`।";
+            $analysisText = !empty($med->analysis_summary) ? $med->analysis_summary : "মূলত ভুল বোঝাবুঝি ও আবেগের কারণে এই দূরত্বের সৃষ্টি হয়েছে।";
 
-            $this->logMessage($med->id, 'STEP_5', null, 'ai_mediator', $reply);
-            return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
+            $groupProposal = "আপনার কথাগুলো অত্যন্ত মূল্যবান এবং আমি আপনার অনুভূতিগুলো গভীর শ্রদ্ধার সাথে অনুধাবন করেছি।\n\n"
+                           . "🔍 *আমাদের নিরপেক্ষ মনস্তাত্ত্বিক পর্যবেক্ষণ:*\n{$analysisText}\n\n"
+                           . "🤝 *পুনর্মিলনের সুযোগ:* {$med->party_a_name} আন্তরিকভাবে সব ভুল বোঝাবুঝি দূর করতে চায়।\n\n"
+                           . "আমরা কি একটি নিরাপদ WhatsApp গ্রুপে আপনাদের দুজনকে নিয়ে একটি গঠনমূলক ও শান্ত আলোচনা শুরু করতে পারি?\n"
+                           . "আপনি রাজি থাকলে লিখুন: `হ্যাঁ রাজি`।";
+
+            $this->whatsapp->sendMessage($med->party_a_phone, $groupProposal);
+            $this->logMessage($med->id, 'STEP_5', $med->party_a_phone, 'ai_mediator', $groupProposal);
+
+            $this->logMessage($med->id, 'STEP_5', $senderPhone, 'ai_mediator', $groupProposal);
+            return ['handled' => true, 'reply' => $groupProposal, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
         }
 
         // Step 5: Party B গ্রুপে আসতে সম্মতি দিল
         if ($med->status === 'STEP_5_ANALYZING_VIABILITY') {
-            if (preg_match('/(?:হ্যাঁ|রাজি|yes|agree|ok|সম্মতি)/iu', $clean)) {
+            if (preg_match('/(?:হ্যাঁ|রাজি|yes|agree|ok|সম্মতি|নিশ্চয়ই)/iu', $clean)) {
                 $med->party_b_consent_group = true;
                 $med->save();
 
@@ -660,30 +824,61 @@ class FriendshipMediationService
                     return $this->launchGroupMediationSession($med, 1);
                 }
 
-                // Party A-এর সম্মতি চাওয়া
                 $partyANotice = "🌸 *সুসংবাদ {$med->party_a_name}!* তোমার বন্ধু কথা বলতে এবং গ্রুপ আলোচনায় বসতে সম্মতি দিয়েছে।\n\n"
                               . "তুমি কি গ্রুপে শান্ত ও সৌহার্দ্যপূর্ণভাবে আলোচনা শুরু করতে প্রস্তুত? রাজি থাকলে লিখুন: `হ্যাঁ রাজি`।";
                 $this->whatsapp->sendMessage($med->party_a_phone, $partyANotice);
 
-                $reply = "ধন্যবাদ আপনার সম্মতির জন্য! {$med->party_a_name}-এর চূড়ান্ত সম্মতি নিশ্চিত হওয়া মাত্রই আমরা মধ্যস্থতা গ্রুপে আলোচনা শুরু করব।";
+                $reply = "ধন্যবাদ আপনার সম্মতির জন্য! {$med->party_a_name}-এর চূড়ান্ত সম্মতি নিশ্চিত হওয়া মাত্রই আমরা মধ্যস্থতা গ্রুপে আলোচনা শুরু করব। 🕊️";
                 return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
             }
+
+            $isRefusalStep5B = preg_match('/^(?:না|নো|no|stop|cancel)(?:[,।\s]|$)/iu', $clean)
+                || preg_match('/(?:গ্রুপে\s*যাব\s*না|গ্রুপে\s*বসতে\s*চাই\s*না|গ্রুপ\s*(?:চাই\s*না|দরকার\s*নেই)|আলোচনা\s*চাই\s*না)/iu', $clean);
+            if ($isRefusalStep5B) {
+                $med->status = 'DECLINED_BY_FRIEND';
+                $med->is_terminated = true;
+                $med->closure_reason = 'PARTY_B_DECLINED_GROUP';
+                $med->save();
+
+                $declineReply = "আপনার সিদ্ধান্তকে শ্রদ্ধা জানাচ্ছি। কোনো বিষয়ে কাউকে বাধ্য করা আমাদের উদ্দেশ্য নয়। আপনার সুন্দর ও শান্তিময় জীবন কামনা করি। 🌸";
+                $this->whatsapp->sendMessage($senderPhone, $declineReply);
+
+                if (!empty($med->party_a_phone)) {
+                    $this->whatsapp->sendMessage($med->party_a_phone, "ℹ️ আপনার বন্ধু এই মুহূর্তে গ্রুপ আলোচনায় বসতে প্রস্তুত নন। ওনার সিদ্ধান্তকে সম্মান জানিয়ে মধ্যস্থতা স্থগিত করা হয়েছে।");
+                }
+                return ['handled' => true, 'reply' => $declineReply, 'step' => 'DECLINED_BY_FRIEND'];
+            }
+
+            $step5PromptB = "তুমি 'FREND' নিরপেক্ষ ফ্রেন্ডশিপ মিডিয়েটর। দুই বন্ধুকে একটি নিরাপদ মীমাংসা গ্রুপে নেওয়ার প্রস্তুতি চলছে।\n"
+                          . "বন্ধু ২ ({$med->party_b_name}) গ্রুপ মধ্যস্থতা নিয়ে সংশয় বা প্রশ্ন প্রকাশ করেছে: \"{$clean}\"\n\n"
+                          . "তোমার দায়িত্ব:\n"
+                          . "১. তাকে আশ্বস্ত করো যে গ্রুপে আমি নিজে মধ্যস্থতাকারী হিসেবে উপস্থিত থাকব এবং কোনো অসৌজন্যমূলক আচরণ বা কটু কথা বলতে দেওয়া হবে না।\n"
+                          . "২. আলোচনাটি অত্যন্ত সম্মানজনক ও সৌহার্দ্যপূর্ণ হবে।\n"
+                          . "৩. তাকে সাহস ও উৎসাহ দাও যাতে অতীতের সুন্দর বন্ধুত্বের খাতিরে সে একবার শান্ত আলোচনায় বসে।\n"
+                          . "৪. তাকে স্মরণ করিয়ে দাও যে যদি সে প্রস্তুত থাকে তবে যেন `হ্যাঁ রাজি` লিখে জানায়।\n"
+                          . "৫. উত্তর ২-৩ বাক্যে, অত্যন্ত বিনম্র ও আশ্বস্তকারী বাংলায় দাও।";
+
+            $history = $this->getPartyConversationHistory($med, 'party_b');
+            $step5ReplyB = $this->gemini->generateMediationReply($step5PromptB, $clean, $history);
+            if (empty($step5ReplyB)) {
+                $step5ReplyB = "গ্রুপে আমি নিজে উপস্থিত থেকে আলোচনা পরিচালনা করব, যাতে কোনো প্রকার কটু কথা বা তর্ক না হয়। আপনারা নিরাপদে শান্তভাবে কথা বলতে পারবেন। আপনি প্রস্তুত থাকলে বলুন: `হ্যাঁ রাজি`। 🤝";
+            }
+            $this->logMessage($med->id, 'STEP_5', $senderPhone, 'ai_mediator', $step5ReplyB);
+            return ['handled' => true, 'reply' => $step5ReplyB, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
         }
 
         // Step 7: প্রথমবার গ্রুপ ছেড়ে যাওয়া ব্যক্তির সাথে ব্যক্তিগত ফরোয়ার্ড
         if ($med->status === 'STEP_7_MEMBER_LEFT_ATTEMPT_1') {
-            // leaver রাজি হলে Step 8 চালু
             if (preg_match('/(?:হ্যাঁ|রাজি|আরেকবার|yes|ok|try)/iu', $clean)) {
                 return $this->launchGroupMediationSession($med, 2);
             } else {
-                // রাজি না হলে স্থায়ী সমাপ্তি
                 return $this->terminateMediationPermanently($med, 'MEMBER_DECLINED_SECOND_ATTEMPT');
             }
         }
 
         return [
             'handled' => true,
-            'reply' => "আপনার বার্তাটি নথিভুক্ত হয়েছে। ধন্যবাদ আপনার সহযোগিতার জন্য।",
+            'reply' => "আপনার বার্তাটি সুরক্ষিত রয়েছে। ধন্যবাদ আপনার সহযোগিতার জন্য।",
             'step' => $med->status
         ];
     }
@@ -717,22 +912,21 @@ class FriendshipMediationService
     }
 
     /**
-     * Step 4 & 5: দুই পক্ষের বক্তব্য বিশ্লেষণ
+     * Step 4 & 5: দুই পক্ষের বক্তব্য নিরপেক্ষ ও মনস্তাত্ত্বিক বিশ্লেষণ (Dual Perspective Synthesis)
      */
     protected function performDualPerspectiveAnalysis(FriendshipMediation $med): void
     {
-        $analysisPrompt = "তুমি একজন বিশেষজ্ঞ নিরপেক্ষ ফ্রেন্ডশিপ মেডিয়েটর ও সাইকোলজিস্ট।\n"
-                        . "উভয় পক্ষের বক্তব্য বিশ্লেষণ করো:\n\n"
-                        . "বন্ধু ১ ({$med->party_a_name}) এর বক্তব্য:\n{$med->party_a_statement}\n\n"
-                        . "বন্ধু ২ এর বক্তব্য:\n{$med->party_b_statement}\n\n"
-                        . "সংক্ষেপে (৩-৪ লাইনে) নিরপেক্ষভাবে চিহ্নিত করো: মূল ভুল বোঝাবুঝি কোথায় হয়েছে এবং কীভাবে উভয়ে শান্ত হতে পারে।";
-
         try {
-            $res = $this->gemini->chatReply($analysisPrompt, 'মিডিয়েটর');
-            $med->analysis_summary = $res;
+            $analysis = $this->gemini->analyzeConflict(
+                $med->party_a_name ?: 'বন্ধু ১',
+                $med->party_a_statement ?: '',
+                $med->party_b_name ?: 'বন্ধু ২',
+                $med->party_b_statement ?: ''
+            );
+            $med->analysis_summary = $analysis;
             $med->save();
         } catch (Exception $e) {
-            $med->analysis_summary = "মূলত পারস্পরিক প্রত্যাশা ও যোগাযোগের ঘাটতি থেকে এই ভুল বোঝাবুঝির সৃষ্টি হয়েছে। শান্ত আলোচনার মাধ্যমে সমাধান সম্ভব।";
+            $med->analysis_summary = "উভয় পক্ষের বক্তব্য বিশ্লেষণ করে দেখা গেছে যে মূলত ভুল বোঝাবুঝি ও যোগাযোগের ঘাটতি থেকে দূরত্বের সৃষ্টি হয়েছে। কিন্তু দুজনের মনেই একে অপরের প্রতি শ্রদ্ধা ও অতীতের বন্ধুত্বের টান রয়েছে। শান্ত আলোচনার মাধ্যমে সুন্দর সমাধান সম্ভব।";
             $med->save();
         }
     }
@@ -800,7 +994,7 @@ class FriendshipMediationService
         $clean = trim($text);
 
         // যদি কেউ ক্ষমা চায় বা মিল হয়ে যাওয়ার কথা বলে
-        if (preg_match('/(?:ক্ষমা|সরি|ভুল\s*হয়েছে|মাফ|মিল|দোস্ত|বন্ধু|সব\s*ঠিক|মিটে\s*গেছে)/iu', $clean)) {
+        if (preg_match('/(?:ক্ষমা|সরি|sorry|ভুল\s*হয়েছে|ভুল\s*হয়েছিল|মাফ|মিল|দোস্ত|বন্ধু|সব\s*ঠিক|মিটে\s*গেছে|ভালোবাসি)/iu', $clean)) {
             $peaceReply = "🌸 মাশাআল্লাহ! ভুল স্বীকার করা এবং ক্ষমা করা মহত্ত্বের লক্ষণ।\n\n"
                         . "আপনাদের দুজনের মধ্যকার ভুল বোঝাবুঝি দূর হয়ে বন্ধুত্ব পুনরায় স্বাভাবিক হওয়ার এই সিদ্ধান্ত সত্যিই প্রশংসনীয়।\n\n"
                         . "সবসময় এভাবেই একে অপরের পাশে থাকবেন। সুন্দর বন্ধুত্বের শুভকামনা রইল! 🤝❤️";
@@ -811,22 +1005,23 @@ class FriendshipMediationService
             $med->reconciliation_outcome = 'MUTUAL_FRIENDSHIP_RECONCILIATION_ACHIEVED';
             $med->save();
 
+            $this->logMessage($med->id, 'RESOLVED', $med->group_id, 'ai_mediator', $peaceReply);
             return ['handled' => true, 'reply' => $peaceReply, 'step' => 'RESOLVED'];
         }
 
-        // মধ্যস্থতাকারী হিসেবে উত্তেজনা প্রশমন ও নিরপেক্ষ পথ দেখানো
-        $moderatorPrompt = "তুমি 'FREND' নিরপেক্ষ ফ্রেন্ডশিপ মিডিয়েটর। গ্রুপে মধ্যস্থতা চলছে।\n"
-                         . "সদস্যের কথা: \"{$clean}\"\n"
-                         . "সংক্ষেপে (১-৩ বাক্যে) নিরপেক্ষভাবে উত্তেজনা প্রশমন করো এবং অপর পক্ষকে শান্তভাবে প্রতিক্রিয়া জানাতে বলো।";
+        $isPartyA = $this->isPhoneMatch($senderPhone, $med->party_a_phone);
+        $speakerName = $isPartyA ? ($med->party_a_name ?: 'বন্ধু ১') : ($med->party_b_name ?: 'বন্ধু ২');
+        $otherName = $isPartyA ? ($med->party_b_name ?: 'বন্ধু ২') : ($med->party_a_name ?: 'বন্ধু ১');
 
+        // মধ্যস্থতাকারী হিসেবে উত্তেজনা প্রশমন ও নিরপেক্ষ পথ দেখানো (Gemini Mediator)
         try {
-            $aiMod = $this->gemini->chatReply($moderatorPrompt, 'মিডিয়েটর');
+            $aiMod = $this->gemini->moderateGroupMessage($clean, $speakerName, $otherName, $med->analysis_summary);
             $this->whatsapp->sendMessage($med->group_id, $aiMod);
             $this->logMessage($med->id, $med->status, $med->group_id, 'ai_mediator', $aiMod);
             return ['handled' => true, 'reply' => $aiMod, 'step' => $med->status];
         } catch (Exception $e) {}
 
-        return ['handled' => true, 'reply' => 'ধন্যবাদ, শান্তভাবে আলোচনা চালিয়ে যান।'];
+        return ['handled' => true, 'reply' => 'ধন্যবাদ, শান্তভাবে আলোচনা চালিয়ে যান। 🕊️'];
     }
 
     /**
@@ -842,8 +1037,7 @@ class FriendshipMediationService
             return ['handled' => false, 'reason' => 'No active mediation case found for this group'];
         }
 
-        $cleanLeaver = preg_replace('/\D/', '', $leaverPhone);
-        $isPartyA = str_contains($med->party_a_phone, $cleanLeaver);
+        $isPartyA = $this->isPhoneMatch($leaverPhone, $med->party_a_phone);
         $remainingPhone = $isPartyA ? $med->party_b_phone : $med->party_a_phone;
         $remainingName = $isPartyA ? $med->party_b_name : $med->party_a_name;
         $leaverName = $isPartyA ? $med->party_a_name : $med->party_b_name;
@@ -1006,7 +1200,10 @@ class FriendshipMediationService
         if (!$phone) return '';
         $digits = preg_replace('/\D/', '', $phone);
         if (str_starts_with($digits, '8801') && strlen($digits) === 13) {
-            return '0' . substr($digits, 2);
+            return substr($digits, 2);
+        }
+        if (strlen($digits) === 11 && str_starts_with($digits, '01')) {
+            return $digits;
         }
         return $phone;
     }

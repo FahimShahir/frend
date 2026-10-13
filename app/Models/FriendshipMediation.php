@@ -93,11 +93,14 @@ class FriendshipMediation extends Model
                     $q->where('group_id', $phoneOrGroup);
                 } else {
                     $q->where('party_a_phone', $phoneOrGroup)
-                      ->orWhere('party_b_phone', $phoneOrGroup);
-                    
+                      ->orWhere('party_b_phone', $phoneOrGroup)
+                      ->orWhere('party_a_id', $phoneOrGroup);
+
                     if (strlen($cleanPhone) >= 9) {
-                        $q->orWhere('party_a_phone', 'LIKE', "%{$cleanPhone}%")
-                          ->orWhere('party_b_phone', 'LIKE', "%{$cleanPhone}%");
+                        $tail9 = substr($cleanPhone, -9);
+                        $q->orWhere('party_a_phone', 'LIKE', "%{$tail9}%")
+                          ->orWhere('party_b_phone', 'LIKE', "%{$tail9}%")
+                          ->orWhere('party_a_id', 'LIKE', "%{$tail9}%");
                     }
                 }
             })
