@@ -1,0 +1,13 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 1. গুরুত্বপূর্ণ ও সংবেদনশীল ফাইল ব্লক (Security Shield)
+    RewriteRule ^(\.env|\.git|composer\.(json|lock)|package(-lock)?\.json|phpunit\.xml|_ide_helper\.php) - [F,L,NC]
+
+    # 2. সরাসরি public ফোল্ডারে রিডাইরেক্ট (cPanel Shared Hosting Support)
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# সরাসরি ফাইল ব্রাউজিং বন্ধ
+Options -Indexes
