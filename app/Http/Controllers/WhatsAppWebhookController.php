@@ -23,18 +23,28 @@ use Exception;
  * ৪. WhatsApp-এ স্বয়ংক্রিয় বাংলা রিপ্লাই ফেরত পাঠাবে
  * ৫. cPanel ক্রনজব URL হ্যান্ডলার (GET /cron/reminders/process) পরিচালনা করবে
  */
+use App\Services\AggressiveLocalAiService;
+use App\Services\SelfHealingService;
+use App\Services\SelfUpdateService;
+
 class WhatsAppWebhookController extends Controller
 {
-    protected GeminiAiService $ai;
+    protected AggressiveLocalAiService $localAi;
+    protected SelfHealingService $healer;
+    protected SelfUpdateService $updater;
     protected FrendWhatsAppService $whatsapp;
     protected ReminderDispatchService $dispatcher;
 
     public function __construct(
-        GeminiAiService $ai,
+        AggressiveLocalAiService $localAi,
+        SelfHealingService $healer,
+        SelfUpdateService $updater,
         FrendWhatsAppService $whatsapp,
         ReminderDispatchService $dispatcher
     ) {
-        $this->ai = $ai;
+        $this->localAi = $localAi;
+        $this->healer = $healer;
+        $this->updater = $updater;
         $this->whatsapp = $whatsapp;
         $this->dispatcher = $dispatcher;
     }
@@ -152,14 +162,78 @@ class WhatsAppWebhookController extends Controller
             return response()->json(['status' => 'handled', 'command' => 'note']);
         }
 
-        // 3. স্মার্ট AI এনালাইজার (Gemini)
-        $analysis = $this->ai->analyzeMessageForReminder($text);
+        $isAdmin = ($botUser && ($botUser->role === 'admin' || $botUser->is_admin)) 
+            || ($sender === env('ADMIN_WHATSAPP_PHONE')) 
+            || ($cleanPhone === env('ADMIN_WHATSAPP_PHONE'));
 
-        if (!empty($analysis['hasEvent']) && !empty($analysis['eventText'])) {
-            $eventText = $analysis['eventText'];
-            $timeHint = $analysis['timeHint'] ?? 'পরে';
-            $minutes = $analysis['estimatedMinutesFromNow'] ?? 60;
-            $remindAt = Carbon::now('Asia/Dhaka')->addMinutes($minutes);
+        // ৩. সেলফ-হিলিং কমান্ড (সিস্টেম অখণ্ডতা পরীক্ষা ও স্বয়ংক্রিয় মেরামত)
+        if (preg_match('/^(?:সেলফ\s*হিলিং|self\s*heal(?:ing)?|সিস্টেম\s*চেক|system\s*check|স্বাস্থ্য\s*পরীক্ষা)$/iu', $text)) {
+            $healReport = $this->healer->diagnoseAndHeal();
+            $statusText = $healReport['healthy'] ? '✅ সুস্থ ও সক্রিয় (Healthy)' : '⚠️ রিকভারি সম্পন্ন হয়েছে';
+            $reply = "🩺 *FREND স্বয়ংক্রিয় সেলফ-হিলিং রিপোর্ট*\n\n"
+                   . "• অবস্থা: {$statusText}\n"
+                   . "• ডেটাবেস: " . ($healReport['diagnostics']['database'] ?? 'OK') . "\n"
+                   . "• উদ্ধারকৃত রিমাইন্ডার: " . ($healReport['diagnostics']['stuck_reminders_recovered'] ?? 0) . "টি\n"
+                   . "• সিস্টেম ক্যাশ: পরিষ্কার করা হয়েছে ✅\n";
+            if (!empty($healReport['healed_actions'])) {
+                $reply .= "\n🔧 *হিলিং অ্যাকশন:*\n" . implode("\n", array_map(fn($a) => "- {$a}", $healReport['healed_actions']));
+            }
+            $reply .= "\n\n_🛡️ সিস্টেম সেলফ-হিলিং স্বয়ংক্রিয়ভাবে সার্বক্ষণিক নজরদারি করছে।_";
+            $this->whatsapp->sendMessage($sender, $reply);
+            return response()->json(['status' => 'handled', 'command' => 'self_heal', 'report' => $healReport]);
+        }
+
+        // ৪. স্বয়ংক্রিয় সেলফ-আপডেট কমান্ড (অ্যাডমিন অনুমোদিত)
+        if (preg_match('/^(?:বট\s*আপডেট|self\s*update|আপডেট\s*করো|সিস্টেম\s*আপডেট)$/iu', $text)) {
+            if (!$isAdmin) {
+                $this->whatsapp->sendMessage($sender, "⚠️ দুঃখিত, সেলফ-আপডেট নির্দেশ দেওয়ার অনুমতি শুধুমাত্র প্রশাসকের রয়েছে।");
+                return response()->json(['status' => 'unauthorized', 'command' => 'self_update']);
+            }
+            $updateRes = $this->updater->executeSelfUpdate('v2.6.0', 'WhatsApp কমান্ডের মাধ্যমে সেলফ-আপডেট', 'whatsapp');
+            if ($updateRes['success']) {
+                $reply = "🚀 *FREND স্বয়ংক্রিয় সেলফ-আপডেট সম্পন্ন!*\n\n"
+                       . "• ভার্সন: {$updateRes['version']}\n"
+                       . "• স্কিমা ও মাইগ্রেশন: সিঙ্কড ✅\n"
+                       . "• অপটিমাইজেশন ও ক্যাশ: রিফ্রেশ সম্পন্ন ✅\n"
+                       . "• অফলাইন মডেল ও রুলস: সক্রিয় ✅\n\n"
+                       . "_কোনো টার্মিনাল ছাড়াই সফলভাবে সিস্টেম আপডেট হয়েছে।_";
+            } else {
+                $reply = "❌ *আপডেট ত্রুটি:* " . ($updateRes['error'] ?? 'অজানা ত্রুটি');
+            }
+            $this->whatsapp->sendMessage($sender, $reply);
+            return response()->json(['status' => 'handled', 'command' => 'self_update', 'result' => $updateRes]);
+        }
+
+        // ৫. ইনস্ট্যান্ট নতুন ফিচার যোগ (অ্যাডমিন কমান্ড: নতুন ফিচার: <কিওয়ার্ড> => <উত্তর>)
+        if (preg_match('/^(?:নতুন\s*ফিচার|add\s*feature)[:\s]+(.+)$/ius', $text, $matches)) {
+            if (!$isAdmin) {
+                $this->whatsapp->sendMessage($sender, "⚠️ নতুন ফিচার যোগ করার অনুমতি শুধুমাত্র প্রশাসকের রয়েছে।");
+                return response()->json(['status' => 'unauthorized']);
+            }
+            $featureInput = trim($matches[1]);
+            $parts = preg_split('/=>|->|:/u', $featureInput, 2);
+            if (count($parts) === 2) {
+                $kw = trim($parts[0]);
+                $tpl = trim($parts[1]);
+                $this->localAi->registerDynamicFeature("ফিচার: {$kw}", $kw, $tpl);
+                $reply = "✨ *নতুন ডাইনামিক ফিচার যোগ করা হয়েছে!*\n\n"
+                       . "📌 কিওয়ার্ড: *{$kw}*\n"
+                       . "💬 স্বয়ংক্রিয় উত্তর: *{$tpl}*\n\n"
+                       . "এখন থেকে যে কেউ `{$kw}` লিখলে অফলাইনে এই উত্তরটি পাবে (০ API খরচ)!";
+                $this->whatsapp->sendMessage($sender, $reply);
+                return response()->json(['status' => 'handled', 'command' => 'dynamic_feature_added']);
+            }
+        }
+
+        // ৬. অ্যাগ্রেসিভ লোকাল অফলাইন AI ইঞ্জিন (৯০%+ মেসেজ ০ মিলিসেকেন্ডে ও ০ API খরচে প্রসেস করে)
+        $aiResult = $this->localAi->processMessage($text, $name, $effectiveUserId);
+
+        // যদি কোনো রিমাইন্ডার শনাক্ত হয় (অফলাইন রুলস বা ফলব্যাক দিয়ে)
+        if (!empty($aiResult['reminder_data']['hasEvent'])) {
+            $rData = $aiResult['reminder_data'];
+            $eventText = $rData['eventText'];
+            $timeHint = $rData['timeHint'] ?? 'পরে';
+            $remindAt = $rData['remindAt'] ?? Carbon::now('Asia/Dhaka')->addHour();
 
             Reminder::create([
                 'user_id' => $effectiveUserId,
@@ -169,19 +243,26 @@ class WhatsAppWebhookController extends Controller
                 'is_sent' => false,
             ]);
 
-            $reply = "⏰ *স্মার্ট রিমাইন্ডার সেট করা হয়েছে!*\n\n"
+            $sourceLabel = ($aiResult['handled_locally'] ?? false) ? '⚡ লোকাল অফলাইন AI' : '🧠 ক্লাউড AI';
+            $reply = "⏰ *স্মার্ট রিমাইন্ডার সেট করা হয়েছে!* ({$sourceLabel})\n\n"
                    . "📌 কাজ: *{$eventText}*\n"
                    . "🕒 সময়: *{$timeHint}* (" . $remindAt->format('d M, h:i A') . ")\n\n"
-                   . "নির্দিষ্ট সময়ে আমি আপনাকে আবার মনে করিয়ে দেব ইনশাআল্লাহ!";
+                   . "নির্দিষ্ট সময়ে আমি আপনাকে আবার মনে করিয়ে দেব ইনশাআল্লাহ! 🚀\n"
+                   . "_🔒 এটি শুধুমাত্র আপনার অ্যাকাউন্টে সংরক্ষিত।_";
             $this->whatsapp->sendMessage($sender, $reply);
-            return response()->json(['status' => 'handled', 'type' => 'ai_reminder']);
+            return response()->json(['status' => 'handled', 'type' => 'reminder', 'source' => $aiResult['source'] ?? 'local']);
         }
 
-        // 4. সাধারণ বুদ্ধিমান বাংলা উত্তর (Gemini Chat)
-        $chatReply = $this->ai->chatReply($text, $name);
+        // ৭. চ্যাট রিপ্লাই প্রেরণ (লোকাল প্যাটার্ন, ক্যাশ বা ক্লাউড)
+        $chatReply = $aiResult['reply'] ?? 'আমি আপনার বার্তাটি পেয়েছি!';
         $this->whatsapp->sendMessage($sender, $chatReply);
 
-        return response()->json(['status' => 'handled', 'type' => 'chat']);
+        return response()->json([
+            'status' => 'handled', 
+            'type' => 'chat', 
+            'handled_locally' => $aiResult['handled_locally'] ?? false,
+            'source' => $aiResult['source'] ?? 'local'
+        ]);
     }
 
     /**

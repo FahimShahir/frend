@@ -73,6 +73,12 @@ Route::prefix('admin')->name('admin.')->middleware(['web'])->group(function () {
         Route::post('/artisan', [FrendSettingsController::class, 'runArtisan'])->name('artisan');
         Route::post('/test-gemini', [FrendSettingsController::class, 'testGemini'])->name('test-gemini');
         Route::post('/test-bot', [FrendSettingsController::class, 'testBot'])->name('test-bot');
+        Route::post('/self-heal', [FrendSettingsController::class, 'selfHeal'])->name('self-heal');
+        Route::post('/self-update', [FrendSettingsController::class, 'selfUpdate'])->name('self-update');
+        Route::post('/add-feature', [FrendSettingsController::class, 'addFeature'])->name('add-feature');
+        Route::post('/toggle-feature/{id}', [FrendSettingsController::class, 'toggleFeature'])->name('toggle-feature');
+        Route::delete('/feature/{id}', [FrendSettingsController::class, 'deleteFeature'])->name('delete-feature');
+        Route::post('/clear-ai-cache', [FrendSettingsController::class, 'clearAiCache'])->name('clear-ai-cache');
     });
 });
 
@@ -81,3 +87,8 @@ Route::get('/cron/reminders/process', [WhatsAppWebhookController::class, 'cpanel
 
 // 6. WhatsApp Webhook endpoint (API)
 Route::post('/api/whatsapp/webhook', [WhatsAppWebhookController::class, 'handleIncomingMessage']);
+
+// 7. অটোনোমাস সেলফ-হিলিং ও সেলফ-আপডেট API (External webhook, cron বা সরাসরি API কল)
+Route::post('/api/system/self-heal', [FrendSettingsController::class, 'selfHeal']);
+Route::post('/api/system/self-update', [FrendSettingsController::class, 'selfUpdate']);
+Route::get('/api/system/ai-stats', [FrendSettingsController::class, 'getAiStats']);

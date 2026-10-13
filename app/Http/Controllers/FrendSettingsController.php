@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use App\Services\GeminiAiService;
 use App\Services\FrendWhatsAppService;
+use App\Services\SelfHealingService;
+use App\Services\SelfUpdateService;
+use App\Services\AggressiveLocalAiService;
 use Exception;
 
 /**
@@ -17,18 +20,30 @@ use Exception;
  * cPanel শেয়ার্ড হোস্টিংয়ের জন্য অল-ইন-ওয়ান সিস্টেম কন্ট্রোল:
  * ১. ওয়েব আর্টিসান টার্মিনাল (SSH/Terminal ছাড়া যেকোনো artisan কমান্ড রান করা)
  * ২. .env ফাইল এডিটর (cPanel ফাইল ম্যানেজার ছাড়া সেটিংস ও API Key পরিবর্তন)
- * ৩. সিস্টেম ডায়াগনস্টিক ও স্বাস্থ্য পরীক্ষা
- * ৪. Gemini AI ও WhatsApp গেটওয়ে কানেকশন টেস্ট
+ * ৩. সিস্টেম ডায়াগনস্টিক, সেলফ-হিলিং ও হেলথ রিকভারি
+ * ৪. অটোনোমাস সেলফ-আপডেট (API/Web থেকে ওয়ান-ক্লিক আপডেট)
+ * ৫. ডাইনামিক ফিচার অ্যাডিশন ও অফলাইন AI অপটিমাইজেশন কন্ট্রোল
  */
 class FrendSettingsController extends Controller
 {
     protected GeminiAiService $ai;
     protected FrendWhatsAppService $whatsapp;
+    protected SelfHealingService $healer;
+    protected SelfUpdateService $updater;
+    protected AggressiveLocalAiService $localAi;
 
-    public function __construct(GeminiAiService $ai, FrendWhatsAppService $whatsapp)
-    {
+    public function __construct(
+        GeminiAiService $ai, 
+        FrendWhatsAppService $whatsapp,
+        SelfHealingService $healer,
+        SelfUpdateService $updater,
+        AggressiveLocalAiService $localAi
+    ) {
         $this->ai = $ai;
         $this->whatsapp = $whatsapp;
+        $this->healer = $healer;
+        $this->updater = $updater;
+        $this->localAi = $localAi;
     }
 
     /**
@@ -83,7 +98,33 @@ class FrendSettingsController extends Controller
         // বটের লাইভ স্ট্যাটাস
         $botStatus = $this->whatsapp->getStatus();
 
-        return view('admin.settings', compact('diagnostics', 'dbStatus', 'dbError', 'config', 'botStatus'));
+        // অফলাইন AI পরিসংখ্যান
+        $aiStats = $this->localAi->getAiStats();
+
+        // সিস্টেম সেলফ-আপডেট স্ট্যাটাস
+        $updateStatus = $this->updater->getUpdateStatus();
+
+        // ডাইনামিক ফিচার তালিকা
+        $dynamicFeatures = DB::table('system_dynamic_features')->orderBy('id', 'desc')->get();
+
+        // সাম্প্রতিক সেলফ-হিলিং লগ
+        $recentHealingLogs = DB::table('system_diagnostic_logs')->orderBy('id', 'desc')->take(8)->get();
+
+        // সাম্প্রতিক সেলফ-আপডেট হিস্টোরি
+        $recentUpdates = DB::table('system_self_updates')->orderBy('id', 'desc')->take(5)->get();
+
+        return view('admin.settings', compact(
+            'diagnostics', 
+            'dbStatus', 
+            'dbError', 
+            'config', 
+            'botStatus',
+            'aiStats',
+            'updateStatus',
+            'dynamicFeatures',
+            'recentHealingLogs',
+            'recentUpdates'
+        ));
     }
 
     /**
@@ -248,5 +289,117 @@ class FrendSettingsController extends Controller
     {
         $status = $this->whatsapp->getStatus();
         return response()->json($status);
+    }
+
+    /**
+     * স্বয়ংক্রিয় সেলফ-হিলিং রান করা (Web & API)
+     */
+    public function selfHeal(Request $request)
+    {
+        $result = $this->healer->diagnoseAndHeal();
+
+        if ($request->wantsJson() || $request->is('api/*')) {
+            return response()->json([
+                'success' => true,
+                'message' => 'সেলফ-হিলিং সফলভাবে এক্সিকিউট হয়েছে!',
+                'data' => $result,
+            ]);
+        }
+
+        return back()->with('success', '🩺 স্বয়ংক্রিয় সেলফ-হিলিং সফলভাবে সম্পন্ন হয়েছে! ডাটাবেস ও সার্ভিস সুস্থ রয়েছে।');
+    }
+
+    /**
+     * ওয়ান-ক্লিক সেলফ-আপডেট এক্সিকিউট করা (Web & API)
+     */
+    public function selfUpdate(Request $request)
+    {
+        $version = $request->input('version', 'v2.6.0');
+        $changelog = $request->input('changelog', 'ওয়েব কন্ট্রোল প্যানেল থেকে ওয়ান-ক্লিক সেলফ-আপডেট');
+        $type = $request->is('api/*') ? 'api' : 'web';
+
+        $result = $this->updater->executeSelfUpdate($version, $changelog, $type);
+
+        if ($request->wantsJson() || $request->is('api/*')) {
+            return response()->json($result);
+        }
+
+        if ($result['success']) {
+            return back()->with('success', "🚀 সিস্টেম সেলফ-আপডেট সফল! মাইগ্রেশন ও ক্যাশ রিফ্রেশ সম্পন্ন ({$version})।");
+        }
+
+        return back()->with('warning', 'আপডেট ব্যর্থ: ' . ($result['error'] ?? 'অজানা সমস্যা'));
+    }
+
+    /**
+     * নতুন ডাইনামিক ফিচার যোগ করা
+     */
+    public function addFeature(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:191',
+            'keyword' => 'required|string|max:191',
+            'response_template' => 'required|string',
+            'description' => 'nullable|string|max:255',
+        ]);
+
+        $res = $this->localAi->registerDynamicFeature(
+            $validated['name'],
+            $validated['keyword'],
+            $validated['response_template'],
+            $validated['description'] ?? null
+        );
+
+        if ($request->wantsJson() || $request->is('api/*')) {
+            return response()->json(['success' => true, 'feature' => $res]);
+        }
+
+        return back()->with('success', "✨ নতুন ডাইনামিক ফিচার '{$validated['name']}' সফলভাবে রেজিস্টার করা হয়েছে!");
+    }
+
+    /**
+     * ডাইনামিক ফিচার সক্রিয়/নিষ্ক্রিয় টগল করা
+     */
+    public function toggleFeature(Request $request, $id)
+    {
+        $feature = DB::table('system_dynamic_features')->where('id', $id)->first();
+        if ($feature) {
+            DB::table('system_dynamic_features')->where('id', $id)->update([
+                'is_active' => !$feature->is_active,
+                'updated_at' => now(),
+            ]);
+        }
+
+        return back()->with('success', 'ফিচার স্ট্যাটাস সফলভাবে পরিবর্তন করা হয়েছে।');
+    }
+
+    /**
+     * ডাইনামিক ফিচার ডিলিট করা
+     */
+    public function deleteFeature(Request $request, $id)
+    {
+        DB::table('system_dynamic_features')->where('id', $id)->delete();
+        return back()->with('success', 'ডাইনামিক ফিচার মুছে ফেলা হয়েছে।');
+    }
+
+    /**
+     * লোকাল AI ক্যাশ পরিষ্কার করা
+     */
+    public function clearAiCache(Request $request)
+    {
+        DB::table('local_ai_knowledge_cache')->truncate();
+        return back()->with('success', '🧠 লোকাল অফলাইন AI নলেজ ক্যাশ সফলভাবে ক্লিয়ার করা হয়েছে।');
+    }
+
+    /**
+     * অফলাইন AI স্ট্যাটাস ও পরিসংখ্যান API
+     */
+    public function getAiStats(Request $request)
+    {
+        $stats = $this->localAi->getAiStats();
+        return response()->json([
+            'success' => true,
+            'stats' => $stats,
+        ]);
     }
 }

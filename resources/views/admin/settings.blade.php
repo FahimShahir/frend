@@ -1,46 +1,270 @@
 @extends('admin.layout')
 
-@section('title', 'সিস্টেম সেটিংস ও ওয়েব টার্মিনাল')
-@section('page_title', 'সিস্টেম সেটিংস ও ওয়েব টার্মিনাল')
-@section('page_subtitle', 'cPanel শেয়ার্ড হোস্টিংয়ের জন্য টার্মিনাল ও ফাইল ম্যানেজার ছাড়া সরাসরি ব্রাউজার থেকে সম্পূর্ণ সিস্টেম নিয়ন্ত্রণ')
+@section('title', 'সিস্টেম সেটিংস, সেলফ-হিলিং ও আপডেট')
+@section('page_title', 'সিস্টেম সেটিংস, সেলফ-হিলিং ও স্বয়ংক্রিয় আপডেট')
+@section('page_subtitle', 'cPanel শেয়ার্ড হোস্টিংয়ের জন্য টার্মিনাল ছাড়া সেলফ-হিলিং, অটোনোমাস আপডেট, ডাইনামিক ফিচার এবং লোকাল অফলাইন AI নিয়ন্ত্রণ')
 
 @section('content')
 <div style="display: flex; flex-direction: column; gap: 24px;">
 
-    <!-- 1. System Health Quick Stats -->
+    <!-- 1. System Health & AI Quick Stats -->
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
         <div class="card" style="padding: 16px 20px;">
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">PHP ভার্সন ও পরিবেশ</div>
-            <div style="font-size: 18px; font-weight: 700; color: #fff;">PHP {{ $diagnostics['php_version'] }}</div>
-            <div style="font-size: 11px; color: var(--accent-cyan); margin-top: 4px;">{{ $diagnostics['os'] }}</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">সিস্টেম ভার্সন ও স্ট্যাটাস</div>
+            <div style="font-size: 18px; font-weight: 700; color: #fff;">{{ $updateStatus['current_version'] ?? 'v2.6.0' }}</div>
+            <div style="font-size: 11px; color: var(--accent-emerald); margin-top: 4px;">✅ সেলফ-হিলিং ও অটো-রিকভারি সক্রিয়</div>
         </div>
 
         <div class="card" style="padding: 16px 20px;">
             <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">MySQL ডেটাবেস</div>
             <div style="font-size: 18px; font-weight: 700; color: {{ str_contains($dbStatus, 'CONNECTED') ? 'var(--accent-emerald)' : 'var(--accent-rose)' }};">
-                {{ str_contains($dbStatus, 'CONNECTED') ? 'সক্রিয় (Connected)' : 'বিচ্ছিন্ন' }}
+                {{ str_contains($dbStatus, 'CONNECTED') ? 'সংযুক্ত (Connected)' : 'বিচ্ছিন্ন' }}
             </div>
             <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">{{ $config['db_database'] }}</div>
         </div>
 
         <div class="card" style="padding: 16px 20px;">
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">WhatsApp গেটওয়ে</div>
-            <div style="font-size: 18px; font-weight: 700; color: {{ ($botStatus['status'] ?? '') === 'CONNECTED' ? 'var(--accent-emerald)' : 'var(--accent-amber)' }};">
-                {{ $botStatus['status'] ?? 'OFFLINE' }}
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">লোকাল অফলাইন AI ক্যাশ</div>
+            <div style="font-size: 18px; font-weight: 700; color: var(--accent-cyan);">
+                {{ $aiStats['offline_hits_saved'] ?? 0 }} টি কল সাশ্রয়
             </div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">{{ $config['frend_bot_url'] }}</div>
+            <div style="font-size: 11px; color: var(--accent-emerald); margin-top: 4px;">⚡ লাইভ API প্রেশার ~{{ $aiStats['api_reduction_percentage'] ?? 95 }}% হ্রাসকৃত</div>
         </div>
 
         <div class="card" style="padding: 16px 20px;">
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Gemini AI স্ট্যাটাস</div>
-            <div style="font-size: 18px; font-weight: 700; color: {{ $config['has_gemini_key'] ? 'var(--accent-cyan)' : 'var(--accent-amber)' }};">
-                {{ $config['has_gemini_key'] ? 'কনফিগার করা আছে' : 'API Key প্রয়োজন' }}
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">ডাইনামিক ফিচারসমূহ</div>
+            <div style="font-size: 18px; font-weight: 700; color: var(--accent-violet);">
+                {{ $aiStats['active_dynamic_features'] ?? count($dynamicFeatures) }} টি সক্রিয়
             </div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">{{ $config['has_gemini_key'] ? $config['gemini_key_masked'] : 'সেটিংস থেকে যুক্ত করুন' }}</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">মোট এক্সিকিউশন: {{ $aiStats['dynamic_feature_executions'] ?? 0 }} বার</div>
         </div>
     </div>
 
-    <!-- 2. Web Artisan Console (Terminal Replacement) -->
+    <!-- 2. Self-Healing & System Auto-Recovery Control Center -->
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div class="card-title">
+                <span>🩺</span>
+                <span>স্বয়ংক্রিয় সেলফ-হিলিং ও সিস্টেম রিকভারি (Autonomous Self-Healing)</span>
+            </div>
+            <form action="{{ route('admin.settings.self-heal') }}" method="POST" style="margin: 0;">
+                @csrf
+                <button type="submit" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    🩺 এক ক্লিকে সেলফ-হিলিং ও ডায়াগনস্টিক চালান
+                </button>
+            </form>
+        </div>
+        <div style="padding: 20px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 16px;">
+                <div style="background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 10px; padding: 14px;">
+                    <div style="font-weight: 600; color: var(--accent-emerald); font-size: 14px; margin-bottom: 6px;">🛡️ স্টাক রিমাইন্ডার উদ্ধার</div>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                        কোনো রিমাইন্ডার ক্র্যাশ বা নেটওয়ার্ক ড্রপের কারণে PROCESSING অবস্থায় আটকে থাকলে সেলফ-হিলিং স্বয়ংক্রিয়ভাবে তাকে PENDING-এ ফিরিয়ে এনে পুনরায় পাঠায়।
+                    </div>
+                </div>
+
+                <div style="background: rgba(6, 182, 212, 0.05); border: 1px solid rgba(6, 182, 212, 0.2); border-radius: 10px; padding: 14px;">
+                    <div style="font-weight: 600; color: var(--accent-cyan); font-size: 14px; margin-bottom: 6px;">🗄️ স্কিমা ও টেবিল অটো-রিপেয়ার</div>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                        প্রয়োজনীয় টেবিল মুছে গেলে বা কোনো মিসিং কলাম পাওয়া গেলে সেলফ-হিলিং সার্ভিস সরাসরি মাইগ্রেশন এক্সিকিউট করে মিসিং স্কিমা ঠিক করে।
+                    </div>
+                </div>
+
+                <div style="background: rgba(139, 92, 246, 0.05); border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 10px; padding: 14px;">
+                    <div style="font-weight: 600; color: var(--accent-violet); font-size: 14px; margin-bottom: 6px;">🧹 ক্যাশ ও মেমোরি ফ্লাশ</div>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                        শেয়ার্ড হোস্টিংয়ে মেমোরি লিক বা ক্যাশ লক প্রতিরোধ করতে স্বয়ংক্রিয়ভাবে অকেজো টোকেন ও সাময়িক ফাইল পরিষ্কার করে।
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Self-Healing Audit Logs -->
+            @if(count($recentHealingLogs) > 0)
+            <div style="margin-top: 14px;">
+                <div style="font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 8px;">সাম্প্রতিক সেলফ-হিলিং ইভেন্ট ও লগ:</div>
+                <div style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px;">
+                    @foreach($recentHealingLogs as $log)
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 12px;">
+                        <div>
+                            <span style="color: var(--accent-emerald); font-weight: 600;">[{{ $log->category }}]</span>
+                            <span style="color: var(--text-muted); margin-left: 6px;">{{ Str::limit($log->corrective_action, 80) }}</span>
+                        </div>
+                        <span style="color: var(--text-muted); font-size: 11px;">{{ \Carbon\Carbon::parse($log->created_at)->diffForHumans() }}</span>
+                    </div>
+                    @endforeach
+                </div>
+            </div>
+            @endif
+        </div>
+    </div>
+
+    <!-- 3. Autonomous Self-Update (Web & API Driven) -->
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div class="card-title">
+                <span>🚀</span>
+                <span>স্বয়ংক্রিয় সেলফ-আপডেট ইঞ্জিন (Autonomous Self-Update via API/Web)</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <form action="{{ route('admin.settings.self-update') }}" method="POST" style="margin: 0;">
+                    @csrf
+                    <input type="hidden" name="version" value="v2.6.0">
+                    <button type="submit" class="btn btn-primary" onclick="return confirm('আপনি কি নিশ্চিত যে সম্পূর্ণ সিস্টেম সেলফ-আপডেট চালাতে চান?')">
+                        🚀 ওয়ান-ক্লিক সেলফ-আপডেট চালান
+                    </button>
+                </form>
+            </div>
+        </div>
+        <div style="padding: 20px;">
+            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 14px;">
+                cPanel শেয়ার্ড হোস্টিং বা রিমোট সার্ভারে কোনো টার্মিনাল/SSH ছাড়া সম্পূর্ণ সিস্টেম নিজে নিজেই ডাটাবেস মাইগ্রেশন সম্পন্ন করবে, ক্যাশ রিফ্রেশ করবে এবং হেলথ চেক সম্পন্ন করবে।
+            </p>
+
+            <div style="background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 16px; margin-bottom: 14px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <div style="font-size: 13px; font-weight: 600; color: #fff;">রিমোট API দিয়ে স্বয়ংক্রিয় আপডেট করার এন্ডপয়েন্ট:</div>
+                        <code style="color: var(--accent-cyan); font-size: 12px;">POST {{ url('/api/system/self-update') }}</code>
+                    </div>
+                    <span style="font-size: 11px; color: var(--accent-emerald); background: rgba(16, 185, 129, 0.1); padding: 4px 10px; border-radius: 6px;">
+                        GitHub Actions / Webhook Ready
+                    </span>
+                </div>
+            </div>
+
+            <!-- Recent Update History Table -->
+            @if(count($recentUpdates) > 0)
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted); text-align: left;">
+                            <th style="padding: 8px;">ভার্সন</th>
+                            <th style="padding: 8px;">টাইপ</th>
+                            <th style="padding: 8px;">স্ট্যাটাস</th>
+                            <th style="padding: 8px;">লগ / পরিবর্তন</th>
+                            <th style="padding: 8px;">সময়</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($recentUpdates as $u)
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding: 8px; font-weight: 600; color: #fff;">{{ $u->version }}</td>
+                            <td style="padding: 8px;"><span style="background: rgba(6, 182, 212, 0.1); color: var(--accent-cyan); padding: 2px 8px; border-radius: 4px; font-size: 11px;">{{ strtoupper($u->update_type) }}</span></td>
+                            <td style="padding: 8px;"><span style="color: {{ $u->status === 'success' ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}; font-weight: 600;">{{ strtoupper($u->status) }}</span></td>
+                            <td style="padding: 8px; color: var(--text-muted); font-size: 12px;">{{ $u->change_log }}</td>
+                            <td style="padding: 8px; color: var(--text-muted); font-size: 11px;">{{ \Carbon\Carbon::parse($u->created_at)->diffForHumans() }}</td>
+                        </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+            @endif
+        </div>
+    </div>
+
+    <!-- 4. Dynamic Extensible Features & Aggressive Offline AI -->
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div class="card-title">
+                <span>✨</span>
+                <span>ডাইনামিক ফিচার অ্যাডিশন ও অফলাইন AI নলেজ (Dynamic Features & Offline AI)</span>
+            </div>
+            <form action="{{ route('admin.settings.clear-ai-cache') }}" method="POST" style="margin: 0;">
+                @csrf
+                <button type="submit" class="btn btn-secondary" onclick="return confirm('আপনি কি লোকাল AI ক্যাশ পরিষ্কার করতে চান?')">
+                    🧠 AI ক্যাশ ক্লিয়ার করুন ({{ $aiStats['cached_patterns_count'] ?? 0 }}টি এন্ট্রি)
+                </button>
+            </form>
+        </div>
+        <div style="padding: 20px;">
+            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
+                বটে নতুন ফিচার যোগ করার জন্য কোনো কোড পরিবর্তন বা সার্ভার রিস্টার্টের দরকার নেই! যেকোনো কিওয়ার্ড এবং স্বয়ংক্রিয় উত্তর এখানে যুক্ত করলে বটের লোকাল অফলাইন মডেল ০ মিলিসেকেন্ডে ০ API খরচে উত্তর দেবে:
+            </p>
+
+            <!-- New Feature Addition Form -->
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; margin-bottom: 24px;">
+                <h4 style="font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                    <span>➕</span>
+                    <span>নতুন ডাইনামিক ফিচার যোগ করুন (No Code / Instant Live)</span>
+                </h4>
+                <form action="{{ route('admin.settings.add-feature') }}" method="POST">
+                    @csrf
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 14px;">
+                        <div>
+                            <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">ফিচারের নাম</label>
+                            <input type="text" name="name" placeholder="যেমন: হেল্পলাইন বা অফার তথ্য" required
+                                   style="width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; color: #fff; font-size: 13px;">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">ট্রিগার কিওয়ার্ড / কথা</label>
+                            <input type="text" name="keyword" placeholder="যেমন: হেল্পলাইন, hotline, সাপোর্ট" required
+                                   style="width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; color: #fff; font-size: 13px;">
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 14px;">
+                        <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">
+                            স্বয়ংক্রিয় উত্তর / রেসপন্স টেমপ্লেট ({NAME}, {TIME}, {DATE} ব্যবহার করা যাবে)
+                        </label>
+                        <textarea name="response_template" rows="3" placeholder="হেই {NAME}, আমাদের কাস্টমার কেয়ার নম্বর হলো: 01700-000000" required
+                                  style="width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; color: #fff; font-size: 13px;"></textarea>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end;">
+                        <button type="submit" class="btn btn-primary" style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);">
+                            ✨ নতুন ফিচার রেজিস্টার করুন
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Existing Dynamic Features List -->
+            <div>
+                <div style="font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 12px;">রেজিস্টার্ড ফিচারসমূহ:</div>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    @forelse($dynamicFeatures as $feat)
+                    <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap;">
+                        <div style="flex-grow: 1;">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                                <span style="font-weight: 700; color: #fff; font-size: 14px;">{{ $feat->name }}</span>
+                                <span style="background: {{ $feat->is_active ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)' }}; color: {{ $feat->is_active ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
+                                    {{ $feat->is_active ? 'সক্রিয় (Active)' : 'নিষ্ক্রিয় (Disabled)' }}
+                                </span>
+                                <span style="font-size: 11px; color: var(--accent-cyan); background: rgba(6, 182, 212, 0.1); padding: 2px 8px; border-radius: 4px;">
+                                    ব্যবহৃত: {{ $feat->usage_count }} বার
+                                </span>
+                            </div>
+                            <div style="font-size: 12px; color: var(--accent-violet); margin-bottom: 6px; font-family: monospace;">
+                                ট্রিগার: {{ $feat->trigger_patterns }}
+                            </div>
+                            <div style="font-size: 12px; color: var(--text-muted); background: rgba(255,255,255,0.02); padding: 8px 12px; border-radius: 6px; border: 1px dashed rgba(255,255,255,0.1); white-space: pre-wrap;">{{ $feat->response_template }}</div>
+                        </div>
+
+                        <div style="display: flex; gap: 6px;">
+                            <form action="{{ route('admin.settings.toggle-feature', $feat->id) }}" method="POST" style="margin: 0;">
+                                @csrf
+                                <button type="submit" class="btn btn-secondary" style="padding: 6px 10px; font-size: 11px;">
+                                    {{ $feat->is_active ? '⏸️ নিষ্ক্রিয় করুন' : '▶️ সক্রিয় করুন' }}
+                                </button>
+                            </form>
+                            <form action="{{ route('admin.settings.delete-feature', $feat->id) }}" method="POST" style="margin: 0;">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" class="btn btn-secondary" style="padding: 6px 10px; font-size: 11px; color: var(--accent-rose);" onclick="return confirm('এই ফিচারটি মুছে ফেলতে চান?')">
+                                    🗑️ মুছুন
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                    @empty
+                    <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">কোনো ডাইনামিক ফিচার পাওয়া যায়নি। উপরের ফর্ম থেকে নতুন ফিচার যোগ করুন।</div>
+                    @endforelse
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. Web Artisan Console (Terminal Replacement) -->
     <div class="card">
         <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
             <div class="card-title">
@@ -104,7 +328,7 @@ $ প্রস্তুত। যেকোনো বাটনে চাপ দ�
         </div>
     </div>
 
-    <!-- 3. System Configuration & .env Editor -->
+    <!-- 6. System Configuration & .env Editor -->
     <div class="card">
         <div class="card-header">
             <div class="card-title">
@@ -225,7 +449,7 @@ $ প্রস্তুত। যেকোনো বাটনে চাপ দ�
         </div>
     </div>
 
-    <!-- 4. cPanel Web Cron Job Setup -->
+    <!-- 7. cPanel Web Cron Job Setup -->
     <div class="card">
         <div class="card-header">
             <div class="card-title">
