@@ -111,10 +111,146 @@ class FriendshipMediationService
     }
 
     /**
+     * বাতিল বা বন্ধ করার ইচ্ছা শনাক্তকরণ (Universal Cancel Intent Detection)
+     */
+    public function isCancellationIntent(string $text): bool
+    {
+        $clean = trim($text);
+
+        // ১. সুস্পষ্ট মিডিয়েশন সম্পর্কিত বাতিল (Explicit mediation cancellation)
+        if (preg_match('/(?:মিডিয়েশন|মিডিয়েশন|mediation|মধ্যস্থতা)\s*(?:বাতিল|বন্ধ|স্টপ|stop|cancel|cancle|off|অফ|বাদ|close|end|ক্যান্সেল)/iu', $clean) ||
+            preg_match('/(?:cancel|cancle|stop|off|বাতিল|বন্ধ|স্টপ|অফ|close|end|ক্যান্সেল)\s*(?:মিডিয়েশন|মিডিয়েশন|mediation|মধ্যস্থতা)/iu', $clean)) {
+            return true;
+        }
+
+        // ২. সংক্ষিপ্ত বা একক বাতিল কমান্ড (যেমন: "cancel", "cancle", "বাতিল", "বন্ধ করো", "stop", "off")
+        if (preg_match('/^(?:cancel|cancle|cancelled|বাতিল|বন্ধ|স্টপ|stop|off|অফ|exit|quit|ক্যান্সেল)(?:[,।!.\s]|$)/iu', $clean) ||
+            preg_match('/^(?:বাতিল\s*করো|বাতিল\s*করুন|বন্ধ\s*করো|বন্ধ\s*করুন|অফ\s*করো|অফ\s*করুন|off\s*koro|stop\s*koro|bondho\s*koro|cancle\s*koro|cancel\s*koro)(?:[,।!.\s]|$)/iu', $clean)) {
+            return true;
+        }
+
+        // ৩. আর দরকার নাই / বাদ দাও / চাই না
+        if (preg_match('/^(?:আর\s*(?:দরকার|প্রয়োজন)\s*(?:নাই|নেই)|বাদ\s*দাও|আর\s*চাই\s*না|দরকার\s*(?:নাই|নেই)|চাই\s*না)(?:[,।!.\s]|$)/iu', $clean)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * সক্রিয় মধ্যস্থতা অবিলম্বে বন্ধ ও বাতিলকরণ (Universal Explicit Cancellation)
+     */
+    public function handleExplicitCancellation(string $senderPhone, string $senderName, string $text, ?string $groupId = null): ?array
+    {
+        $activeCases = FriendshipMediation::findAllActiveCasesForSender($senderPhone, $groupId);
+
+        if ($activeCases->isEmpty()) {
+            // যদি ব্যবহারকারী সরাসরি মিডিয়েশন মোড অফ বা বাতিল করতে বলে থাকেন
+            $explicitMention = (bool) preg_match('/(?:মিডিয়েশন|মিডিয়েশন|mediation|মধ্যস্থতা)/iu', $text);
+            if ($explicitMention) {
+                return [
+                    'handled' => true,
+                    'reply' => "ℹ️ বর্তমানে আপনার কোনো সক্রিয় মধ্যস্থতা (Mediation) প্রক্রিয়া চালু নেই।\n\n✅ `[MEDIATION]` মোড ইতিমধ্যে বন্ধ (OFF) রয়েছে। আপনি যেকোনো স্বাভাবিক বার্তা পাঠাতে পারেন! 🕊️",
+                    'step' => 'NO_ACTIVE_MEDIATION',
+                    'is_cancelled' => true,
+                ];
+            }
+            // সাধারণ 'cancel' বা 'বাতিল' কিন্তু কোনো মধ্যস্থতা কেস নেই — অন্য সেবার (যেমন রিমাইন্ডার) জন্য ছেড়ে দেওয়া হোক
+            return null;
+        }
+
+        $cancelledCodes = [];
+        foreach ($activeCases as $med) {
+            $med->is_terminated = true;
+            $med->status = 'CANCELLED';
+            $med->closure_reason = 'USER_EXPLICIT_CANCEL';
+            $med->reconciliation_outcome = 'CANCELLED_BY_USER';
+            $med->save();
+
+            $cancelledCodes[] = $med->case_code;
+            $this->logMessage($med->id, 'CANCELLED', $senderPhone, 'user', "ব্যবহারকারী কর্তৃক মধ্যস্থতা বাতিল: {$text}");
+
+            $role = $this->getParticipantRole($med, $senderPhone);
+
+            // অপর সংশ্লিষ্ট পক্ষদের শান্তভাবে অবহিতকরণ
+            if ($role === 'party_a') {
+                if (!empty($med->party_b_phone) && $med->status !== 'STEP_1_LISTENING_PARTY_A') {
+                    $this->whatsapp->sendMessage(
+                        $med->party_b_phone,
+                        "ℹ️ মধ্যস্থতার আবেদনকারী প্রক্রিয়াটি বাতিল করেছেন। আপনাদের আর কোনো মেসেজ বা যোগাযোগ করা হবে না। ভালো থাকবেন। 🌸"
+                    );
+                }
+                if (!empty($med->initiator_phone) && !$this->isPhoneMatch($med->initiator_phone, $senderPhone)) {
+                    $this->whatsapp->sendMessage(
+                        $med->initiator_phone,
+                        "ℹ️ বন্ধু ১ ({$med->party_a_name}) মধ্যস্থতা বাতিল করেছেন। কেসটি [{$med->case_code}] বন্ধ করা হলো।"
+                    );
+                }
+            } elseif ($role === 'party_b') {
+                if (!empty($med->party_a_phone)) {
+                    $this->whatsapp->sendMessage(
+                        $med->party_a_phone,
+                        "ℹ️ আপনার বন্ধু এই মুহূর্তে মধ্যস্থতা বন্ধ করতে চেয়েছেন। ওনার ইচ্ছাকে সম্মান জানিয়ে প্রক্রিয়াটি বন্ধ করা হলো।"
+                    );
+                }
+                if (!empty($med->initiator_phone) && !$this->isPhoneMatch($med->initiator_phone, $senderPhone)) {
+                    $this->whatsapp->sendMessage(
+                        $med->initiator_phone,
+                        "ℹ️ বন্ধু ২ মধ্যস্থতা বন্ধ করতে চেয়েছেন। কেসটি [{$med->case_code}] বন্ধ করা হলো।"
+                    );
+                }
+            } elseif ($role === 'initiator') {
+                if (!empty($med->party_a_phone)) {
+                    $this->whatsapp->sendMessage(
+                        $med->party_a_phone,
+                        "ℹ️ মধ্যস্থতার উদ্যোক্তা আবেদনটি প্রত্যাহার করে নিয়েছেন। এই কেসটি [{$med->case_code}] বন্ধ করা হলো। 🕊️"
+                    );
+                }
+                if (!empty($med->party_b_phone)) {
+                    $this->whatsapp->sendMessage(
+                        $med->party_b_phone,
+                        "ℹ️ মধ্যস্থতার উদ্যোক্তা আবেদনটি প্রত্যাহার করে নিয়েছেন। আপনাদের আর কোনো যোগাযোগ করা হবে না। ভালো থাকবেন। 🌸"
+                    );
+                }
+            }
+
+            // গ্রুপ থাকলে গ্রুপে বার্তা দেওয়া
+            if (!empty($med->group_id)) {
+                $this->whatsapp->sendMessage(
+                    $med->group_id,
+                    "🕊️ মধ্যস্থতা প্রক্রিয়াটি বাতিল ও সমাপ্ত করা হয়েছে। [MEDIATION] মোড বন্ধ।"
+                );
+            }
+        }
+
+        $codeStr = implode(', ', $cancelledCodes);
+        $reply = "🛑 *মধ্যস্থতা (Mediation) সফলভাবে বাতিল ও বন্ধ করা হয়েছে।*\n\n"
+               . "📋 কেস কোড: `{$codeStr}`\n"
+               . "✅ *`[MEDIATION]` মোড এখন সম্পূর্ণ বন্ধ (OFF)।*\n\n"
+               . "বট আর মধ্যস্থতার কোনো বার্তা পাঠাবে না। আপনি এখন স্বাভাবিকভাবে চ্যাট, রিমাইন্ডার বা যেকোনো সেবা ব্যবহার করতে পারেন। 🕊️";
+
+        return [
+            'handled' => true,
+            'reply' => $reply,
+            'step' => 'CANCELLED',
+            'case_code' => $codeStr,
+            'is_cancelled' => true,
+        ];
+    }
+
+    /**
      * ইনকামিং মেসেজ কোনো মধ্যস্থতা কেসের অংশ কিনা যাচাই করে হ্যান্ডেল করা
      */
     public function handleMediationMessage(string $senderPhone, string $senderName, string $text, ?string $groupId = null): ?array
     {
+        // ০. সার্বজনীন বাতিল / স্টপ কমান্ড (Universal Explicit Cancellation Handler)
+        if ($this->isCancellationIntent($text)) {
+            $cancelResult = $this->handleExplicitCancellation($senderPhone, $senderName, $text, $groupId);
+            if ($cancelResult !== null) {
+                return $cancelResult;
+            }
+        }
+
         $cleanPhone = preg_replace('/\D/', '', $senderPhone);
 
         // ১. গ্রুপ মেসেজ হ্যান্ডলিং (যদি মেসেজটি কোনো সক্রিয় মেডিয়েশন গ্রুপের হয়)
@@ -609,11 +745,26 @@ class FriendshipMediationService
                     return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_3_CONTACT_PARTY_B'];
                 }
 
+                if ($this->isCancellationIntent($clean)) {
+                    return $this->handleExplicitCancellation($senderPhone, $senderName, $clean);
+                }
+
                 return [
                     'handled' => true,
                     'reply' => "আমি তোমার অনুমতির অপেক্ষায় আছি। তুমি যদি বন্ধুর সাথে মধ্যস্থতা করাতে চাও, তবে `হ্যাঁ পাঠাও` লিখুন, অথবা বাতিল করতে চাইলে `বাতিল` লিখুন।",
                     'step' => 'STEP_2_REQUEST_FRIEND_CONTACT'
                 ];
+
+            case 'STEP_3_CONTACT_PARTY_B':
+                if ($this->isCancellationIntent($clean)) {
+                    return $this->handleExplicitCancellation($senderPhone, $senderName, $clean);
+                }
+                $f2Disp = $this->formatDisplayPhone($med->party_b_phone);
+                $reply = "আমি তোমার অপর বন্ধু ({$f2Disp})-এর কাছে নিরপেক্ষ বার্তা পাঠিয়েছি এবং ওনার উত্তরের অপেক্ষায় আছি। 🕊️\n\n"
+                       . "উনি উত্তর দেওয়া মাত্রই আমি তোমাকে জানাব। শান্ত হয়ে একটু অপেক্ষা করো।\n\n"
+                       . "_(যদি তুমি এই মধ্যস্থতা এখনই বন্ধ করতে চাও, তবে `বাতিল` বা `cancel` লিখুন)_";
+                $this->logMessage($med->id, 'STEP_3', $senderPhone, 'ai_mediator', $reply);
+                return ['handled' => true, 'reply' => $reply, 'step' => 'STEP_3_CONTACT_PARTY_B'];
 
             case 'STEP_5_ANALYZING_VIABILITY':
                 if (preg_match('/(?:হ্যাঁ|রাজি|গ্রুপ|yes|agree|ok|সম্মতি|নিশ্চয়ই)/iu', $clean)) {
@@ -688,6 +839,10 @@ class FriendshipMediationService
                     'reply' => "শান্ত হও {$med->party_a_name}। কোনো তর্ক বা উত্তেজনা বাড়াবে না। আমি ব্যক্তিগতভাবে ওনার সাথে কথা বলে পরিস্থিতি বোঝার চেষ্টা করছি। একটু ধৈর্য ধরো।",
                     'step' => 'STEP_7_MEMBER_LEFT_ATTEMPT_1'
                 ];
+        }
+
+        if ($this->isCancellationIntent($clean)) {
+            return $this->handleExplicitCancellation($senderPhone, $senderName, $clean);
         }
 
         return [

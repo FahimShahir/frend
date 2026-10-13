@@ -615,7 +615,11 @@ async function handleIncomingMsg(msg) {
         check_only: 'mediation'
       });
       if (laravelMediationRes && laravelMediationRes.status === 'handled' && laravelMediationRes.type === 'friendship_mediation') {
-        console.log(`🤝 [MEDIATION] Party B মেসেজ Laravel ফ্রেন্ডশিপ মিডিয়েশন দ্বারা প্রসেস হয়েছে [${laravelMediationRes.step || ''}]`);
+        if (laravelMediationRes.step === 'CANCELLED' || laravelMediationRes.is_cancelled) {
+          console.log(`🛑 [MEDIATION] ফ্রেন্ডশিপ মিডিয়েশন বাতিল/বন্ধ করা হয়েছে [${laravelMediationRes.step || ''}]`);
+        } else {
+          console.log(`🤝 [MEDIATION] Party B মেসেজ Laravel ফ্রেন্ডশিপ মিডিয়েশন দ্বারা প্রসেস হয়েছে [${laravelMediationRes.step || ''}]`);
+        }
         if (laravelMediationRes.reply) {
           await sendBotReply(msg, laravelMediationRes.reply);
         }
@@ -748,7 +752,11 @@ async function handleIncomingMsg(msg) {
         check_only: 'mediation'
       });
       if (laravelMediationRes && laravelMediationRes.status === 'handled' && (laravelMediationRes.type === 'friendship_mediation' || laravelMediationRes.type === 'outgoing_message')) {
-        console.log(`🤝 [MEDIATION] Laravel ফ্রেন্ডশিপ মিডিয়েশন সক্রিয় [ধাপ: ${laravelMediationRes.step || 'N/A'}]`);
+        if (laravelMediationRes.step === 'CANCELLED' || laravelMediationRes.is_cancelled) {
+          console.log(`🛑 [MEDIATION] ফ্রেন্ডশিপ মিডিয়েশন মোড বন্ধ করা হয়েছে (OFF) [${laravelMediationRes.step || ''}]`);
+        } else {
+          console.log(`🤝 [MEDIATION] Laravel ফ্রেন্ডশিপ মিডিয়েশন সক্রিয় [ধাপ: ${laravelMediationRes.step || 'N/A'}]`);
+        }
         if (laravelMediationRes.reply) {
           await sendBotReply(msg, laravelMediationRes.reply);
         }

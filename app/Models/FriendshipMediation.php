@@ -109,6 +109,34 @@ class FriendshipMediation extends Model
     }
 
     /**
+     * Finds all active mediations where the user is Party A, Party B, Initiator, or in a group
+     */
+    public static function findAllActiveCasesForSender(string $senderPhone, ?string $groupId = null)
+    {
+        $cleanPhone = preg_replace('/\D/', '', $senderPhone);
+
+        return self::where('is_terminated', false)
+            ->where(function ($q) use ($senderPhone, $cleanPhone, $groupId) {
+                if ($groupId && str_ends_with($groupId, '@g.us')) {
+                    $q->where('group_id', $groupId);
+                }
+                $q->orWhere('party_a_phone', $senderPhone)
+                  ->orWhere('party_b_phone', $senderPhone)
+                  ->orWhere('party_a_id', $senderPhone)
+                  ->orWhere('initiator_phone', $senderPhone);
+
+                if (strlen($cleanPhone) >= 9) {
+                    $tail9 = substr($cleanPhone, -9);
+                    $q->orWhere('party_a_phone', 'LIKE', "%{$tail9}%")
+                      ->orWhere('party_b_phone', 'LIKE', "%{$tail9}%")
+                      ->orWhere('party_a_id', 'LIKE', "%{$tail9}%")
+                      ->orWhere('initiator_phone', 'LIKE', "%{$tail9}%");
+                }
+            })
+            ->get();
+    }
+
+    /**
      * Finds latest terminated mediation for either Party A or Party B
      */
     public static function findLatestTerminatedMediationFor(string $phone): ?self

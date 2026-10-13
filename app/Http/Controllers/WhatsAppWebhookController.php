@@ -90,6 +90,7 @@ class WhatsAppWebhookController extends Controller
                 'step' => $mediationRes['step'] ?? null,
                 'case_code' => $mediationRes['case_code'] ?? null,
                 'reply' => $mediationRes['reply'] ?? null,
+                'is_cancelled' => $mediationRes['is_cancelled'] ?? false,
             ]);
         }
 
