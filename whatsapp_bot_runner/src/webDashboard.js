@@ -3005,6 +3005,9 @@ function startWebDashboardServer(port = 3000) {
           return;
         }
       });
+      return;
+    }
+
     // ── Laravel / PHP WhatsApp Group Creation API (Mediation & Peacemaking) ──
     if (url.pathname === '/api/create-group' && req.method === 'POST') {
       let body = '';
