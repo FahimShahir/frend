@@ -7,6 +7,7 @@ use App\Models\Note;
 use App\Models\Reminder;
 use App\Models\Gamification;
 use App\Models\BotUser;
+use App\Models\Setting;
 use App\Services\GeminiAiService;
 use App\Services\FrendWhatsAppService;
 use App\Services\ReminderDispatchService;
@@ -190,9 +191,9 @@ class WhatsAppWebhookController extends Controller
             return response()->json(['status' => 'handled', 'command' => 'note']);
         }
 
+        $adminPhone = Setting::get('OWNER_PHONE') ?? Setting::get('ADMIN_WHATSAPP_PHONE');
         $isAdmin = ($botUser && ($botUser->role === 'admin' || $botUser->is_admin)) 
-            || ($sender === env('ADMIN_WHATSAPP_PHONE')) 
-            || ($cleanPhone === env('ADMIN_WHATSAPP_PHONE'));
+            || (!empty($adminPhone) && ($sender === $adminPhone || $cleanPhone === $adminPhone));
 
         // ৩. সেলফ-হিলিং কমান্ড (সিস্টেম অখণ্ডতা পরীক্ষা ও স্বয়ংক্রিয় মেরামত)
         if (preg_match('/^(?:সেলফ\s*হিলিং|self\s*heal(?:ing)?|সিস্টেম\s*চেক|system\s*check|স্বাস্থ্য\s*পরীক্ষা)$/iu', $text)) {
@@ -294,9 +295,9 @@ class WhatsAppWebhookController extends Controller
         }
 
         // যদি লোকাল প্যাটার্ন বা ডাইনামিক ফিচার সরাসরি হ্যান্ডেল করে (শুধুমাত্র ইউটিলিটি/ক্যালকুলেশন বা লাইভ API না থাকলে)
-        $hasLiveApiKey = !empty(\App\Models\Setting::get('GEMINI_API_KEY') ?: env('GEMINI_API_KEY'));
-        $isDeterministicUtility = preg_match('/^\s*(\d+(?:\.\d+)?)\s*([\+\-\*\/])\s*(\d+(?:\.\d+)?)/iu', $cleanText)
-            || preg_match('/(?:সেলফ\s*হিলিং|self\s*heal|system\s*check)/iu', $cleanText)
+        $hasLiveApiKey = !empty(Setting::get('GEMINI_API_KEY') ?: (function_exists('env') ? \env('GEMINI_API_KEY') : null));
+        $isDeterministicUtility = preg_match('/^\s*(\d+(?:\.\d+)?)\s*([\+\-\*\/])\s*(\d+(?:\.\d+)?)/iu', $text)
+            || preg_match('/(?:সেলফ\s*হিলিং|self\s*heal|system\s*check)/iu', $text)
             || ($aiResult['source'] ?? '') === 'dynamic_feature';
 
         if (!empty($aiResult['handled_locally']) && !empty($aiResult['reply']) && ($aiResult['source'] ?? '') !== 'local_cache' && (!$hasLiveApiKey || $isDeterministicUtility)) {
