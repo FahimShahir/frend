@@ -63,10 +63,10 @@ const SYSTEM_PROMPT = `তুমি একটি বাংলা/ইংরেজ
 function getModelList() {
   const settings = aiConfig.getSettings();
   const list = [
+    'gemini-3-flash-preview',
+    'gemini-3.5-flash',
     settings.geminiModel,
-    'gemini-3.5-flash-lite',
-    'gemini-flash-lite-latest',
-    'gemini-3.1-flash-lite',
+    'gemini-2.5-flash',
   ].filter(Boolean);
   return [...new Set(list)];
 }
@@ -253,6 +253,8 @@ const CONVERSATIONAL_SYSTEM_PROMPT = `তুমি FREND — ব্যবহা�
 - Undo বললে action: "UNDO" দেবে।
 - সাধারণ কথা বললে CHAT দেবে। অযথা NOTE বানাবে না!
 - স্মৃতি/মিটিং/ছবি সংক্রান্ত প্রশ্ন হলে MEMORY_QUERY দেবে।
+- ব্যবহারকারীর নাম নির্দিষ্টভাবে জানা না থাকলে "বন্ধু" বলে সম্বোধন করো। কখনোই বটের মালিকের নাম (যেমন: Shahir, Admin User) দিয়ে অন্য কাউকে ডাকবে না!
+- উত্তর সবসময় সাবলীল, বুদ্ধিদীপ্ত, আন্তরিক এবং সঠিক বাংলা/বাংলিশে দেবে। উল্টাপাল্টা বিভ্রান্তিকর বার্তা দেবে না।
 
 আউটপুট শুধু বৈধ JSON অবজেক্ট দাও:
 {"action": "NOTE|UPDATE|REMINDER|DELETE|UNDO|COMPLETE|LIST_NOTES|LIST_REMINDERS|SEARCH|REVIEW|MEMORY_QUERY|MEMORY_FORGET|REMEMBER_THIS|CHAT", "resourceType": "note|reminder|all", "memoryType": "meeting|image|document|fact|all", "targetRef": "...", "content": "...", "timeHint": "...", "mode": "append|shorten|replace", "query": "...", "reply": "..."}`;

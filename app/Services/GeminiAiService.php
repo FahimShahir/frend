@@ -18,7 +18,7 @@ use Exception;
 class GeminiAiService
 {
     protected ?string $apiKey;
-    protected array $models = ['gemini-3.5-flash', 'gemini-3-flash-preview'];
+    protected array $models = ['gemini-3-flash-preview', 'gemini-3.5-flash'];
 
     public function __construct(?string $apiKey = null)
     {

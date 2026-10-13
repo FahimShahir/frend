@@ -189,7 +189,7 @@ function normalizeChatJid(jid) {
   return cleanDigits ? `${cleanDigits}@c.us` : cleanDevice;
 }
 
-const knownOwnerIds = new Set(['117347113263149', '116660002377833', '118932660842648', '8801969091751', '01969091751', '1969091751']);
+const knownOwnerIds = new Set(['8801969091751', '01969091751', '1969091751']);
 
 function getOwnerPhone() {
   const p = client.info?.wid?.user || webDashboard.getBotState().userPhone || process.env.OWNER_PHONE;
@@ -203,7 +203,7 @@ function isMatchingOwner(id) {
   if (knownOwnerIds.has(clean)) return true;
   for (const known of knownOwnerIds) {
     if (clean === known) return true;
-    if (clean.length >= 9 && known.length >= 9 && clean.slice(-9) === known.slice(-9)) {
+    if ((clean.length === 11 || clean.length === 13) && known.length >= 9 && clean.slice(-9) === known.slice(-9)) {
       return true;
     }
   }
@@ -608,10 +608,19 @@ async function handleIncomingMsg(msg) {
       }
 
       // Check if this message is part of an ongoing Friendship Mediation in Laravel (Party B outreach / response)!
+      let partyBDisplayName = '';
+      try {
+        const contact = await msg.getContact();
+        partyBDisplayName = contact?.pushname || contact?.name || '';
+      } catch (_) {}
+      if (!partyBDisplayName) {
+        partyBDisplayName = msg._data?.notifyName || 'বন্ধু';
+      }
+
       const laravelMediationRes = await forwardToLaravelWebhook({
         sender: normalizeChatJid(senderJid),
         message: rawText,
-        name: client.info?.pushname || 'বন্ধু',
+        name: partyBDisplayName,
         check_only: 'mediation'
       });
       if (laravelMediationRes && laravelMediationRes.status === 'handled' && laravelMediationRes.type === 'friendship_mediation') {
@@ -703,8 +712,23 @@ async function handleIncomingMsg(msg) {
       return;
     }
 
-    const ownerUserId = normalizeChatJid(senderJid) || authUser.bound_phone;
-    const ownerName = authUser.display_name || authUser.username || client.info?.pushname || 'User';
+    const isOwner = isMatchingOwner(senderJid) || isSelfChatMessage(msg);
+    let senderDisplayName = '';
+    try {
+      const contact = await msg.getContact();
+      senderDisplayName = contact?.pushname || contact?.name || '';
+    } catch (_) {}
+    if (!senderDisplayName) {
+      senderDisplayName = msg._data?.notifyName || '';
+    }
+
+    const effectiveUserId = normalizeChatJid(senderJid) || (authUser ? authUser.bound_phone : senderJid);
+    let effectiveUserName = '';
+    if (isOwner) {
+      effectiveUserName = authUser?.display_name || authUser?.username || client.info?.pushname || 'Admin';
+    } else {
+      effectiveUserName = senderDisplayName || (authUser ? (authUser.display_name || authUser.username) : '') || 'বন্ধু';
+    }
 
     // ── Voice Message ──
     if (msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio')) {
@@ -713,7 +737,7 @@ async function handleIncomingMsg(msg) {
         await sendBotReply(msg, `🎙️ *ফিচারটি অন্তর্ভুক্ত নেই!*\n\n${access.reason}`);
         return;
       }
-      await handleVoiceMessage(msg, ownerUserId, ownerName);
+      await handleVoiceMessage(msg, effectiveUserId, effectiveUserName);
       return;
     }
 
@@ -724,31 +748,31 @@ async function handleIncomingMsg(msg) {
         await sendBotReply(msg, `📸 *ফিচারটি অন্তর্ভুক্ত নেই!*\n\n${access.reason}`);
         return;
       }
-      await handleImageMessage(msg, ownerUserId, ownerName);
+      await handleImageMessage(msg, effectiveUserId, effectiveUserName);
       return;
     }
 
     // ── Document & File Attachment Message (Section 7) ──
     if (msg.hasMedia && (msg.type === 'document' || !['ptt', 'audio', 'image', 'location'].includes(msg.type))) {
-      await handleDocumentMessage(msg, ownerUserId, ownerName);
+      await handleDocumentMessage(msg, effectiveUserId, effectiveUserName);
       return;
     }
 
     // ── Location Message ──
     if (msg.type === 'location') {
-      await handleLocationMessage(msg, ownerUserId, ownerName);
+      await handleLocationMessage(msg, effectiveUserId, effectiveUserName);
       return;
     }
 
     // ── Text Message ──
     if (msg.body && msg.body.trim()) {
-      console.log(`📩 মেসেজ গ্রহণ [${ownerName}]: "${msg.body}"`);
+      console.log(`📩 মেসেজ গ্রহণ [${effectiveUserName}]: "${msg.body}"`);
 
       // Check Friendship Mediation / Conflict Resolution in Laravel first
       const laravelMediationRes = await forwardToLaravelWebhook({
         sender: normalizeChatJid(senderJid),
         message: msg.body,
-        name: ownerName,
+        name: effectiveUserName,
         check_only: 'mediation'
       });
       if (laravelMediationRes && laravelMediationRes.status === 'handled' && (laravelMediationRes.type === 'friendship_mediation' || laravelMediationRes.type === 'outgoing_message')) {
@@ -763,7 +787,7 @@ async function handleIncomingMsg(msg) {
         return;
       }
 
-      const response = await handleMessage(ownerUserId, ownerName, msg.body);
+      const response = await handleMessage(effectiveUserId, effectiveUserName, msg.body);
       if (response) {
         console.log(`🤖 রিপ্লাই তৈরি: "${response.slice(0, 30).replace(/\n/g, ' ')}..."`);
         const sent = await sendBotReply(msg, response);
@@ -771,7 +795,7 @@ async function handleIncomingMsg(msg) {
           console.log(`✅ রিপ্লাই সফলভাবে পাঠানো হয়েছে!`);
         }
         // Live Chat Logger for Web Dashboard
-        webDashboard.addLiveChatLog(ownerName, msg.body, response);
+        webDashboard.addLiveChatLog(effectiveUserName, msg.body, response);
       }
     }
   } catch (err) {

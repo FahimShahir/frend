@@ -48,7 +48,7 @@ function getSettings() {
   return {
     activeProvider: getSetting('active_provider', 'gemini'), // 'gemini' | 'openai' | 'local'
     geminiApiKey: getSetting('gemini_api_key', process.env.GEMINI_API_KEY || ''),
-    geminiModel: getSetting('gemini_model', process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'),
+    geminiModel: getSetting('gemini_model', process.env.GEMINI_MODEL || 'gemini-3-flash-preview'),
     openaiApiKey: getSetting('openai_api_key', process.env.OPENAI_API_KEY || ''),
     openaiModel: getSetting('openai_model', 'gpt-4o-mini'),
   };
