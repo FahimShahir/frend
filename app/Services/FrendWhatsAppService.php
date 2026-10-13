@@ -31,10 +31,17 @@ class FrendWhatsAppService
             ?? 'http://127.0.0.1:3000';
 
         // Node.js প্রজেক্টের পাথ (যদি একই সার্ভারে/শেয়ার্ড হোস্টিংয়ে থাকে)
-        $this->nodeProjectPath = $nodeProjectPath
+        $customPath = $nodeProjectPath
             ?? (function_exists('env') ? \env('FREND_BOT_PATH') : null)
-            ?? ($_ENV['FREND_BOT_PATH'] ?? null)
-            ?? (function_exists('base_path') ? \base_path('../frend') : dirname(__DIR__, 2) . '/frend');
+            ?? ($_ENV['FREND_BOT_PATH'] ?? null);
+
+        if ($customPath && ($resolved = realpath($customPath) ?: (function_exists('base_path') ? realpath(\base_path($customPath)) : null))) {
+            $this->nodeProjectPath = $resolved;
+        } else {
+            $this->nodeProjectPath = function_exists('base_path')
+                ? \base_path('whatsapp_bot_runner')
+                : dirname(__DIR__, 2) . '/whatsapp_bot_runner';
+        }
     }
 
     /**
@@ -74,7 +81,23 @@ class FrendWhatsAppService
             ];
         }
 
-        $path = realpath($this->nodeProjectPath);
+        // Smart auto-detection for whatsapp_bot_runner
+        $candidates = [
+            $this->nodeProjectPath,
+            function_exists('base_path') ? \base_path('whatsapp_bot_runner') : null,
+            function_exists('base_path') ? \base_path() : null,
+            dirname(__DIR__, 2) . '/whatsapp_bot_runner',
+        ];
+
+        $path = null;
+        foreach ($candidates as $cand) {
+            if ($cand && ($rp = realpath($cand)) && file_exists($rp . '/index.js')) {
+                $path = $rp;
+                $this->nodeProjectPath = $rp;
+                break;
+            }
+        }
+
         if (!$path || !file_exists($path . '/index.js')) {
             return [
                 'success' => false,
