@@ -82,6 +82,7 @@ class FriendshipMediationService
     {
         $caseCode = 'MED_' . strtoupper(substr(md5(uniqid()), 0, 6));
 
+        /** @var FriendshipMediation $mediation */
         $mediation = FriendshipMediation::create([
             'case_code' => $caseCode,
             'status' => 'STEP_1_LISTENING_PARTY_A',
@@ -93,6 +94,10 @@ class FriendshipMediationService
             'is_terminated' => false,
             'last_interaction_at' => now(),
         ]);
+
+        if (!$mediation) {
+            return ['handled' => false];
+        }
 
         $this->logMessage($mediation->id, 'STEP_1', $partyAPhone, 'party_a', $text);
 
@@ -141,6 +146,7 @@ class FriendshipMediationService
             $friendPhone = $newPhone;
         }
 
+        /** @var FriendshipMediation $med */
         $med = FriendshipMediation::create([
             'case_code' => $caseCode,
             'status' => 'STEP_1_LISTENING_PARTY_A',
@@ -154,6 +160,10 @@ class FriendshipMediationService
             'is_terminated' => false,
             'last_interaction_at' => now(),
         ]);
+
+        if (!$med) {
+            return ['handled' => false];
+        }
 
         $this->logMessage($med->id, 'REACTIVATED_STEP_1', $senderPhone, 'party_a', $text);
 

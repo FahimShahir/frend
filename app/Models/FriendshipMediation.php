@@ -5,6 +5,34 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property int $id
+ * @property string $case_code
+ * @property string $status
+ * @property string $party_a_id
+ * @property string $party_a_phone
+ * @property string $party_a_name
+ * @property string|null $party_a_statement
+ * @property bool $party_a_consent_contact
+ * @property bool $party_a_consent_group
+ * @property string|null $party_b_phone
+ * @property string|null $party_b_name
+ * @property string|null $party_b_statement
+ * @property bool $party_b_consent_chat
+ * @property bool $party_b_consent_group
+ * @property string|null $analysis_summary
+ * @property string|null $group_id
+ * @property string|null $group_invite_link
+ * @property int $attempts_count
+ * @property string|null $first_leaver_phone
+ * @property string|null $second_leaver_phone
+ * @property bool $is_terminated
+ * @property string|null $closure_reason
+ * @property string|null $reconciliation_outcome
+ * @property \Carbon\Carbon|null $last_interaction_at
+ * 
+ * @method static FriendshipMediation create(array $attributes = [])
+ */
 class FriendshipMediation extends Model
 {
     protected $table = 'friendship_mediations';
