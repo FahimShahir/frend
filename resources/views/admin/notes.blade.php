@@ -2,16 +2,27 @@
 
 @section('title', 'নোট মেমোরি')
 @section('page_title', 'নোট ও মেমোরি স্টোরেজ')
-@section('page_subtitle', 'হোয়াটসঅ্যাপ ও ওয়েব থেকে সংরক্ষিত সকল ব্যক্তিগত নোট ও তথ্যাদি')
+@section('page_subtitle', 'ব্যবহারকারীভিত্তিক পৃথক ও ব্যক্তিগত নোট মেমোরি কন্ট্রোল')
 
 @section('content')
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
-    <!-- Search Form -->
-    <form method="GET" action="{{ route('admin.notes.index') }}" style="display: flex; gap: 8px; flex-grow: 1; max-width: 450px;">
+    <!-- Search & User Filter Form -->
+    <form method="GET" action="{{ route('admin.notes.index') }}" style="display: flex; gap: 8px; flex-grow: 1; max-width: 650px; flex-wrap: wrap;">
         <input type="text" name="q" value="{{ $search ?? '' }}" placeholder="নোট বা ট্যাগ দিয়ে খুঁজুন..." 
-               style="background: rgba(255,255,255,0.06); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 14px; color: #fff; font-size: 13px; flex-grow: 1; outline: none;">
-        <button type="submit" class="btn btn-secondary">🔍 খুঁজুন</button>
-        @if(!empty($search))
+               style="background: rgba(255,255,255,0.06); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 14px; color: #fff; font-size: 13px; flex-grow: 1; min-width: 180px; outline: none;">
+        
+        <!-- User Isolation Filter -->
+        <select name="user_id" onchange="this.form.submit()" style="background: rgba(17, 24, 39, 0.85); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 14px; color: #fff; font-size: 13px; outline: none;">
+            <option value="">👤 সকল ইউজার (All)</option>
+            @foreach($users as $u)
+                <option value="{{ $u->username }}" {{ ($userFilter ?? '') == $u->username || ($userFilter ?? '') == $u->id ? 'selected' : '' }}>
+                    {{ $u->display_name ?: $u->username }} (@{{ $u->username }})
+                </option>
+            @endforeach
+        </select>
+
+        <button type="submit" class="btn btn-secondary">🔍 ফিল্টার</button>
+        @if(!empty($search) || !empty($userFilter) || !empty($tag))
             <a href="{{ route('admin.notes.index') }}" class="btn btn-secondary">রিসেট</a>
         @endif
     </form>
@@ -22,6 +33,13 @@
         <span>নতুন নোট লিখুন</span>
     </button>
 </div>
+
+@if(!empty($userFilter))
+    <div style="margin-bottom: 18px; padding: 10px 16px; border-radius: 10px; background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3); font-size: 13px; color: var(--accent-cyan); display: flex; align-items: center; justify-content: space-between;">
+        <span>🔒 শুধুমাত্র ব্যবহারকারী <strong>{{ $userFilter }}</strong>-এর ব্যক্তিগত নোট দেখানো হচ্ছে।</span>
+        <a href="{{ route('admin.notes.index') }}" style="color: #fff; text-decoration: underline; font-size: 12px;">সকল নোট দেখুন</a>
+    </div>
+@endif
 
 <!-- Notes Grid -->
 <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px;">
@@ -64,8 +82,11 @@
                         @endforeach
                     </div>
                 @endif
-                <div style="font-size: 11px; color: var(--text-muted);">
-                    ব্যবহারকারী: <code>{{ $note->user_id }}</code>
+                <div style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border-color); padding-top: 8px;">
+                    <span>🔒 স্বত্বাধিকারী:</span>
+                    <a href="{{ route('admin.notes.index', ['user_id' => $note->user_id]) }}" style="color: var(--accent-cyan); text-decoration: none; font-weight: 600; background: rgba(6, 182, 212, 0.12); padding: 2px 8px; border-radius: 6px;" title="শুধুমাত্র এই ইউজারের নোট ফিল্টার করুন">
+                        👤 {{ $note->user_id }}
+                    </a>
                 </div>
             </div>
         </div>
@@ -92,7 +113,17 @@
         <form method="POST" action="{{ route('admin.notes.store') }}">
             @csrf
             <div style="margin-bottom: 16px;">
-                <label style="display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">নোটের বিষয়বস্তু</label>
+                <label style="display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">কোন ইউজারের অ্যাকাউন্টে নোটটি সংরক্ষিত হবে? *</label>
+                <select name="user_id" required style="width: 100%; background: rgba(17, 24, 39, 0.9); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; color: #fff; font-size: 13px; outline: none;">
+                    @foreach($users as $u)
+                        <option value="{{ $u->username }}">
+                            {{ $u->display_name ?: $u->username }} (@{{ $u->username }})
+                        </option>
+                    @endforeach
+                </select>
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">নোটের বিষয়বস্তু *</label>
                 <textarea name="content" rows="4" required placeholder="কী মনে রাখতে চান..." 
                           style="width: 100%; background: rgba(255,255,255,0.06); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; color: #fff; font-size: 14px; outline: none;"></textarea>
             </div>

@@ -390,9 +390,13 @@
                         </td>
 
                         <td>
-                            <div style="font-size: 11px; color: var(--text-muted); display: flex; flex-direction: column; gap: 2px;">
-                                <span>📝 নোট: <strong style="color: #fff;">{{ $user->notes()->count() }}টি</strong></span>
-                                <span>⏰ রিমাইন্ডার: <strong style="color: #fff;">{{ $user->reminders()->count() }}টি</strong></span>
+                            <div style="font-size: 11px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px;">
+                                <a href="{{ route('admin.notes.index', ['user_id' => $user->username]) }}" style="text-decoration: none; color: var(--accent-cyan); display: flex; align-items: center; gap: 4px;" title="শুধুমাত্র এই ইউজারের নিজস্ব নোট দেখুন">
+                                    <span>📝 নোট:</span> <strong style="color: #fff;">{{ $user->notes()->count() }}টি ↗</strong>
+                                </a>
+                                <a href="{{ route('admin.reminders.index', ['user_id' => $user->username]) }}" style="text-decoration: none; color: var(--accent-amber); display: flex; align-items: center; gap: 4px;" title="শুধুমাত্র এই ইউজারের নিজস্ব রিমাইন্ডার দেখুন">
+                                    <span>⏰ রিমাইন্ডার:</span> <strong style="color: #fff;">{{ $user->reminders()->count() }}টি ↗</strong>
+                                </a>
                             </div>
                         </td>
 

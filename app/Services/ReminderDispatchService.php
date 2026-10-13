@@ -37,10 +37,41 @@ class ReminderDispatchService
 
         foreach ($dueReminders as $reminder) {
             $processed++;
-            $targetPhone = $reminder->user_id;
+            $rawUserId = $reminder->user_id;
+
+            // কঠোর ইউজার আইসোলেশন: শুধুমাত্র এই ইউজারের নিজস্ব WhatsApp নম্বরেই পাঠানো হবে
+            $targetPhone = null;
+            if (!empty($rawUserId)) {
+                $botUser = \App\Models\BotUser::where('username', $rawUserId)
+                    ->orWhere('id', $rawUserId)
+                    ->orWhere('bound_phone', $rawUserId)
+                    ->first();
+
+                if ($botUser && !empty($botUser->bound_phone)) {
+                    $targetPhone = $botUser->bound_phone;
+                } else {
+                    $digits = preg_replace('/\D/', '', (string)$rawUserId);
+                    if (strlen($digits) >= 10) {
+                        $targetPhone = $rawUserId;
+                    }
+                }
+            }
+
+            // সিকিউরিটি গার্ড: ইউজারের ফোন না থাকলে অন্য কারো কাছে কোনোভাবেই পাঠানো হবে না
+            if (empty($targetPhone)) {
+                $reminder->markFailed('ইউজার ' . $rawUserId . '-এর কোনো বৈধ WhatsApp নম্বর পাওয়া যায়নি (অন্য ইউজারের কাছে মেসেজ যাওয়া প্রতিরোধ করা হলো)');
+                $failed++;
+                $details[] = [
+                    'id' => $reminder->id,
+                    'user_id' => $rawUserId,
+                    'status' => 'FAILED',
+                    'error' => 'Unmapped recipient phone for user',
+                ];
+                continue;
+            }
 
             // Format friendly Bengali reminder
-            $message = "⏰ *রিমাইন্ডার!*\n\n"
+            $message = "⏰ *ব্যক্তিগত রিমাইন্ডার!*\n\n"
                      . "📌 মনে রাখুন: *{$reminder->content}*\n\n"
                      . "✅ কাজটি শেষ হলে রিপ্লাই দিন: `সম্পন্ন`\n"
                      . "💤 ১৫ মিনিট পর মনে করাতে রিপ্লাই দিন: `স্নুজ`";
@@ -52,7 +83,7 @@ class ReminderDispatchService
                     $reminder->markSent();
                     $success++;
 
-                    // Award gamification points
+                    // Award gamification points strictly to this user
                     try {
                         $gamify = Gamification::firstOrCreate(['user_id' => $targetPhone]);
                         $gamify->recordTaskCompletion();
@@ -61,6 +92,7 @@ class ReminderDispatchService
                     $details[] = [
                         'id' => $reminder->id,
                         'phone' => $targetPhone,
+                        'user_id' => $rawUserId,
                         'status' => 'SENT',
                     ];
                 } else {
@@ -69,6 +101,7 @@ class ReminderDispatchService
                     $details[] = [
                         'id' => $reminder->id,
                         'phone' => $targetPhone,
+                        'user_id' => $rawUserId,
                         'status' => 'FAILED',
                         'error' => $sendResult['error'] ?? 'অজানা ত্রুটি',
                     ];
@@ -79,6 +112,7 @@ class ReminderDispatchService
                 $details[] = [
                     'id' => $reminder->id,
                     'phone' => $targetPhone,
+                    'user_id' => $rawUserId,
                     'status' => 'ERROR',
                     'error' => $e->getMessage(),
                 ];

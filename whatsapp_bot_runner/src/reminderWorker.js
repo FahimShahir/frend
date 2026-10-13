@@ -76,21 +76,29 @@ async function deliverReminderNotification(reminder) {
         targetJid = rawId;
       } else if (cleanDigits.length >= 10) {
         targetJid = `${cleanDigits}@c.us`;
-      } else {
-        targetJid = rawId;
+      } else if (cleanDigits.length >= 10) {
+        targetJid = `${cleanDigits}@c.us`;
       }
     }
   }
 
-  // Fallback to bot owner phone or active connected WhatsApp phone
+  // Strict User Isolation Guard: If reminder belongs to a user and has no valid phone, do NOT send to owner!
+  if (!targetJid && reminder.user_id) {
+    console.warn(`[REMINDER WORKER] ⚠️ ইউজার '${reminder.user_id}'-এর কোনো বৈধ WhatsApp নম্বর পাওয়া যায়নি। অন্য কারো কাছে পাঠানো প্রতিরোধ করা হলো (Reminder #${reminder.id})`);
+    return { success: false, error: 'Recipient phone missing for user — prevented privacy leakage' };
+  }
+
+  // Fallback ONLY for unassigned system notifications
   if (!targetJid) {
     const botState = (webDashboard && typeof webDashboard.getBotState === 'function') ? webDashboard.getBotState() : {};
-    const ownerPhone = (_getOwnerPhone && _getOwnerPhone()) || botState.userPhone || '8801969091751';
-    const ownerDigits = String(ownerPhone).replace(/\D/g, '');
-    if (ownerDigits.startsWith('11') && ownerDigits.length >= 14 && ownerDigits.length <= 16) {
-      targetJid = `${ownerDigits}@lid`;
-    } else {
-      targetJid = `${ownerDigits}@c.us`;
+    const ownerPhone = (_getOwnerPhone && _getOwnerPhone()) || botState.userPhone;
+    if (ownerPhone) {
+      const ownerDigits = String(ownerPhone).replace(/\D/g, '');
+      if (ownerDigits.startsWith('11') && ownerDigits.length >= 14 && ownerDigits.length <= 16) {
+        targetJid = `${ownerDigits}@lid`;
+      } else {
+        targetJid = `${ownerDigits}@c.us`;
+      }
     }
   }
 

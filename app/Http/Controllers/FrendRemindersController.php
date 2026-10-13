@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Reminder;
+use App\Models\BotUser;
 use App\Services\ReminderDispatchService;
 use Carbon\Carbon;
 
@@ -17,12 +18,29 @@ class FrendRemindersController extends Controller
     }
 
     /**
-     * রিমাইন্ডার তালিকা ও ফিল্টার
+     * রিমাইন্ডার তালিকা, স্ট্যাটাস ও ইউজার ফিল্টার
      */
     public function index(Request $request)
     {
         $status = $request->query('status', 'all');
+        $userFilter = $request->query('user_id');
+
         $query = Reminder::query()->latest('remind_at');
+
+        if ($userFilter) {
+            $botUser = BotUser::find($userFilter) ?? BotUser::where('username', $userFilter)->first();
+            if ($botUser) {
+                $keys = array_unique(array_filter([
+                    $botUser->username,
+                    (string)$botUser->id,
+                    $botUser->bound_phone,
+                    preg_replace('/\D/', '', (string)$botUser->bound_phone),
+                ]));
+                $query->whereIn('user_id', $keys);
+            } else {
+                $query->where('user_id', $userFilter);
+            }
+        }
 
         if ($status === 'pending') {
             $query->where('status', 'PENDING');
@@ -36,8 +54,9 @@ class FrendRemindersController extends Controller
         $pendingCount = Reminder::where('status', 'PENDING')->count();
         $sentCount = Reminder::where('status', 'SENT')->count();
         $dueCount = Reminder::due()->count();
+        $users = BotUser::all();
 
-        return view('admin.reminders', compact('reminders', 'status', 'pendingCount', 'sentCount', 'dueCount'));
+        return view('admin.reminders', compact('reminders', 'status', 'userFilter', 'users', 'pendingCount', 'sentCount', 'dueCount'));
     }
 
     /**
