@@ -47,8 +47,11 @@ class FriendshipMediationService
         $activeMediation = FriendshipMediation::findActiveMediationFor($senderPhone);
 
         if ($activeMediation) {
-            $isPartyA = str_contains($activeMediation->party_a_phone, $cleanPhone);
-            $isPartyB = $activeMediation->party_b_phone && str_contains($activeMediation->party_b_phone, $cleanPhone);
+            $cleanA = preg_replace('/\D/', '', $activeMediation->party_a_phone ?? '');
+            $cleanB = preg_replace('/\D/', '', $activeMediation->party_b_phone ?? '');
+
+            $isPartyA = (strlen($cleanPhone) >= 9 && str_contains($cleanA, $cleanPhone)) || $activeMediation->party_a_phone === $senderPhone;
+            $isPartyB = (strlen($cleanPhone) >= 9 && str_contains($cleanB, $cleanPhone)) || $activeMediation->party_b_phone === $senderPhone;
 
             if ($isPartyA) {
                 return $this->processPartyAMessage($activeMediation, $senderPhone, $senderName, $text);
@@ -57,28 +60,179 @@ class FriendshipMediationService
             }
         }
 
+        // ২.১. ইনশিয়েটর (Admin / Initiator) স্ট্যাটাস চেক — যদি কোনো তৃতীয় ব্যক্তি/অ্যাডমিন চলমান মধ্যস্থতার খবর জানতে চান
+        if (strlen($cleanPhone) >= 9 || !empty($senderPhone)) {
+            $initiatorCase = FriendshipMediation::where('is_terminated', false)
+                ->where(function ($q) use ($cleanPhone, $senderPhone) {
+                    $q->where('initiator_phone', $senderPhone);
+                    if (strlen($cleanPhone) >= 9) {
+                        $q->orWhere('initiator_phone', 'LIKE', "%{$cleanPhone}%");
+                    }
+                })
+                ->latest()
+                ->first();
+
+            if ($initiatorCase) {
+                if (preg_match('/(?:স্ট্যাটাস|আপডেট|খবর|status|update|progress|কী\s*হলো|কি\s*হলো|ওদের\s*কী|ওদের\s*কি)/iu', $text)) {
+                    $f1Status = !empty($initiatorCase->party_a_statement) ? "বক্তব্য পাওয়া গেছে ✅" : "উত্তরের অপেক্ষায় ⏳";
+                    $f2Status = !empty($initiatorCase->party_b_statement) ? "বক্তব্য পাওয়া গেছে ✅" : "উত্তরের অপেক্ষায় ⏳";
+                    $reply = "📊 *চলমান মধ্যস্থতা স্ট্যাটাস [{$initiatorCase->case_code}]:*\n\n"
+                           . "• বন্ধু ১ (" . $this->formatDisplayPhone($initiatorCase->party_a_phone) . "): {$f1Status}\n"
+                           . "• বন্ধু ২ (" . $this->formatDisplayPhone($initiatorCase->party_b_phone) . "): {$f2Status}\n"
+                           . "• বর্তমান পর্যায়: *" . $this->getHumanStageName($initiatorCase->status) . "*\n\n"
+                           . "উভয় পক্ষের সাথে প্রক্রিয়াটি শান্তিপূর্ণভাবে চলমান রয়েছে। 🕊️";
+                    return [
+                        'handled' => true,
+                        'reply' => $reply,
+                        'step' => $initiatorCase->status,
+                        'case_code' => $initiatorCase->case_code,
+                    ];
+                }
+            }
+        }
+
         // ৩. পূর্বে বন্ধ হওয়া কেসের পর স্বতঃস্ফূর্তভাবে পুনরায় সক্রিয় করার ইচ্ছা শনাক্তকরণ (Reactivation Flow)
         $previousTerminated = FriendshipMediation::findLatestTerminatedMediationFor($senderPhone);
 
-        if ($this->isReactivationIntent($text)) {
+        if ($previousTerminated && $this->isReactivationIntent($text)) {
             return $this->reactivateMediation($senderPhone, $senderName, $text, $previousTerminated);
         }
 
-        // ৪. নতুন বা পুনরায় মধ্যস্থতা শুরু করার ইচ্ছা শনাক্তকরণ (Initiator starting Step 1)
+        // ৪. নতুন মধ্যস্থতা শুরু করার ইচ্ছা শনাক্তকরণ (Initiator starting conflict resolution)
         if ($this->isFriendshipConflictIntent($text)) {
-            if ($previousTerminated) {
-                return $this->reactivateMediation($senderPhone, $senderName, $text, $previousTerminated);
-            }
-            return $this->initiateNewMediation($senderPhone, $senderName, $text);
+            return $this->routeNewConflictMediation($senderPhone, $senderName, $text);
         }
 
         return null;
     }
 
     /**
-     * নতুন মধ্যস্থতা কেস শুরু করা (Step 1: প্রথম ব্যক্তির কথা মনোযোগ দিয়ে শোনা)
+     * বিরোধ মীমাংসা মেসেজ বিশ্লেষণ করে দুই বন্ধু নাকি একক ব্যক্তির কেস তা নির্ধারণ
      */
-    public function initiateNewMediation(string $partyAPhone, string $partyAName, string $text): array
+    public function routeNewConflictMediation(string $senderPhone, string $senderName, string $text): array
+    {
+        $phones = $this->extractAllPhoneNumbers($text);
+
+        // প্রেরকের নিজের নম্বরকে সম্ভাব্য দুই বন্ধুর তালিকা থেকে বাদ দেওয়া (যাতে নিজেকে নিজে মেসেজ না পাঠায়)
+        $cleanSender = preg_replace('/\D/', '', $senderPhone);
+        $externalPhones = array_values(array_filter($phones, function ($p) use ($cleanSender) {
+            $cP = preg_replace('/\D/', '', $p);
+            return strlen($cleanSender) < 9 || !str_contains($cleanSender, $cP);
+        }));
+
+        $isDualFriendExplicit = (bool) preg_match('/(?:২\s*জন|দুই\s*(?:জন)?|২|দুজন)\s*(?:বন্ধু|ফ্রেন্ড|দোস্ত|মানুষ)|(?:ওদের|তাদের)\s*(?:মধ্যে|দুজনের|দুইজনের|২\s*জনের)|(?:ওদের|তাদের)\s*(?:মিল|কথা)|(?:দুই\s*বন্ধুর|২\s*বন্ধুর)/iu', $text);
+
+        // ১. যদি মেসেজে ২টি বা ততোধিক ফোন নম্বর থাকে — সরাসরি দুই বন্ধুর মধ্যস্থতা শুরু
+        if (count($externalPhones) >= 2) {
+            return $this->initiateDualFriendMediation($senderPhone, $senderName, $externalPhones[0], $externalPhones[1], $text);
+        }
+
+        // ২. যদি ২ জন বন্ধুর কথা বলা হয়েছে কিন্তু ২টি নম্বর দেওয়া হয়নি
+        if ($isDualFriendExplicit) {
+            return [
+                'handled' => true,
+                'reply' => "🤝 *দুই বন্ধুর মধ্যস্থতা শুরু করতে উভয়ের WhatsApp নম্বর প্রয়োজন:*\n\n"
+                         . "অনুগ্রহ করে দুইজন বন্ধুর নম্বর দিন (যেমন:\n"
+                         . "`017xxxxxxxx এবং 018xxxxxxxx এর মধ্যে ঝামেলা মিটিয়ে দাও`)\n\n"
+                         . "আমি কোনো পক্ষপাত ছাড়া নিরপেক্ষভাবে তাদের দুজনের সাথেই আলাদা আলাদা যোগাযোগ করে কথা শুনব। 🕊️",
+                'step' => 'NEED_DUAL_FRIEND_NUMBERS',
+            ];
+        }
+
+        // ৩. যদি প্রেরক অ্যাডমিন বা বট নিজেই হয় (যেমন self-chat বা বট ওনার) এবং ১টি বা ০টি নম্বর থাকে
+        $isAdminSender = (bool) preg_match('/(?:admin|bot|118932660842648|8801969091751|8801601969081)/i', $senderPhone);
+        if ($isAdminSender) {
+            if (count($externalPhones) >= 2) {
+                return $this->initiateDualFriendMediation($senderPhone, $senderName, $externalPhones[0], $externalPhones[1], $text);
+            }
+            return [
+                'handled' => true,
+                'reply' => "🤝 *দুই বন্ধুর মধ্যস্থতা শুরু করতে উভয়ের WhatsApp নম্বর প্রয়োজন:*\n\n"
+                         . "অনুগ্রহ করে দুইজন বন্ধুর নম্বর দিন (যেমন:\n"
+                         . "`017xxxxxxxx এবং 018xxxxxxxx এর মধ্যে ঝামেলা মিটিয়ে দাও`)\n\n"
+                         . "আমি কোনো পক্ষপাত ছাড়া নিরপেক্ষভাবে তাদের দুজনের সাথেই আলাদা আলাদা যোগাযোগ করে কথা শুনব। 🕊️",
+                'step' => 'NEED_DUAL_FRIEND_NUMBERS',
+            ];
+        }
+
+        // ৪. একক ব্যক্তির ফ্রেন্ডশিপ কেস (প্রেরক নিজে Party A)
+        $prefilledFriend = $externalPhones[0] ?? null;
+        return $this->initiateNewMediation($senderPhone, $senderName, $text, $prefilledFriend);
+    }
+
+    /**
+     * দুই বন্ধুর জন্য স্বয়ংক্রিয় নিরপেক্ষ মধ্যস্থতা শুরু করা (Dual-Friend Mediation)
+     * (অ্যাডমিন বা মধ্যস্থতাকারী শুরু করলে দুই বন্ধুকেই মেসেজ পাঠানো হবে, অ্যাডমিন কেবল নিশ্চয়তা পাবে)
+     */
+    public function initiateDualFriendMediation(string $initiatorPhone, string $initiatorName, string $friend1Phone, string $friend2Phone, string $text): array
+    {
+        $caseCode = 'MED_' . strtoupper(substr(md5(uniqid()), 0, 6));
+
+        /** @var FriendshipMediation $mediation */
+        $mediation = FriendshipMediation::create([
+            'case_code' => $caseCode,
+            'status' => 'STEP_1_DUAL_FRIEND_OUTREACH',
+            'initiator_phone' => $initiatorPhone,
+            'initiator_name' => $initiatorName ?: 'শুভাকাঙ্ক্ষী',
+            'party_a_id' => $friend1Phone,
+            'party_a_phone' => $friend1Phone,
+            'party_a_name' => 'বন্ধু ১',
+            'party_b_phone' => $friend2Phone,
+            'party_b_name' => 'বন্ধু ২',
+            'party_a_statement' => null,
+            'party_b_statement' => null,
+            'attempts_count' => 0,
+            'is_terminated' => false,
+            'last_interaction_at' => now(),
+        ]);
+
+        $this->logMessage($mediation->id, 'STEP_1_DUAL', $initiatorPhone, 'initiator', $text);
+
+        $f1Disp = $this->formatDisplayPhone($friend1Phone);
+        $f2Disp = $this->formatDisplayPhone($friend2Phone);
+
+        // Friend 1-কে নিরপেক্ষ বার্তা প্রেরণ
+        $outreach1 = "🌸 *আসসালামু আলাইকুম!*\n\n"
+                   . "আমি *FREND* — একটি নিরপেক্ষ ও সহানুভূতিশীল AI মধ্যস্থতাকারী (Friendship Mediator)।\n\n"
+                   . "আপনার এক শুভাকাঙ্ক্ষী আপনার ও আপনার বন্ধু ({$f2Disp})-এর মধ্যকার সাম্প্রতিক মনোমালিন্য বা ভুল বোঝাবুঝি দূর করার জন্য আমাকে অনুরোধ করেছেন। ওনারা আন্তরিকভাবে চান আপনাদের বন্ধুত্ব আবার আগের মতো সুন্দর হোক।\n\n"
+                   . "🛡️ *আমার অবস্থান:* আমি কোনো পক্ষের নই, সম্পূর্ণ নিরপেক্ষ। কাউকে কোনো ধরনের জোর বা চাপ দেওয়া হবে না; আপনার অনুমতি ও ইচ্ছাই সর্বোচ্চ অগ্রাধিকার।\n\n"
+                   . "আপনি কি আপনার দৃষ্টিকোণ থেকে বিষয়টি জানাতে আগ্রহী? আগ্রহী হলে অনুগ্রহ করে ছোট করে একটি রিপ্লাই দিন। ধন্যবাদ! 🤝";
+
+        $this->whatsapp->sendMessage($friend1Phone, $outreach1);
+        $this->logMessage($mediation->id, 'STEP_1_DUAL', $friend1Phone, 'ai_mediator', $outreach1);
+
+        // Friend 2-কে নিরপেক্ষ বার্তা প্রেরণ
+        $outreach2 = "🌸 *আসসালামু আলাইকুম!*\n\n"
+                   . "আমি *FREND* — একটি নিরপেক্ষ ও সহানুভূতিশীল AI মধ্যস্থতাকারী (Friendship Mediator)।\n\n"
+                   . "আপনার এক শুভাকাঙ্ক্ষী আপনার ও আপনার বন্ধু ({$f1Disp})-এর মধ্যকার সাম্প্রতিক মনোমালিন্য বা ভুল বোঝাবুঝি দূর করার জন্য আমাকে অনুরোধ করেছেন। ওনারা আন্তরিকভাবে চান আপনাদের বন্ধুত্ব আবার আগের মতো সুন্দর হোক।\n\n"
+                   . "🛡️ *আমার অবস্থান:* আমি কোনো পক্ষের নই, সম্পূর্ণ নিরপেক্ষ। কাউকে কোনো ধরনের জোর বা চাপ দেওয়া হবে না; আপনার অনুমতি ও ইচ্ছাই সর্বোচ্চ অগ্রাধিকার।\n\n"
+                   . "আপনি কি আপনার দৃষ্টিকোণ থেকে বিষয়টি জানাতে আগ্রহী? আগ্রহী হলে অনুগ্রহ করে ছোট করে একটি রিপ্লাই দিন। ধন্যবাদ! 🤝";
+
+        $this->whatsapp->sendMessage($friend2Phone, $outreach2);
+        $this->logMessage($mediation->id, 'STEP_1_DUAL', $friend2Phone, 'ai_mediator', $outreach2);
+
+        // Initiator (Admin / Sender)-কে কেবল নিশ্চয়তা বার্তা প্রেরণ (কোনো অপ্রয়োজনীয় প্রশ্ন বা সেলফ-মেসেজিং নয়)
+        $reply = "✅ *দুই বন্ধুর মধ্যস্থতা কার্যক্রম শুরু করা হয়েছে!*\n\n"
+               . "আমি আপনার দুই বন্ধু:\n"
+               . "১. `{$f1Disp}`\n"
+               . "২. `{$f2Disp}`\n\n"
+               . "উভয়ের WhatsApp-এ অত্যন্ত মার্জিত, সম্মানজনক ও নিরপেক্ষ বার্তা পাঠিয়ে তাদের বক্তব্য চেয়েছি। তারা সাড়া দিলে আমি নিরপেক্ষভাবে তাদের কথা শুনে ভুল বোঝাবুঝি দূর করার উদ্যোগ নেব।\n\n"
+               . "🔒 _সম্পূর্ণ নিরপেক্ষতা ও গোপনীয়তা বজায় রেখে আলোচনা পরিচালিত হবে। ধন্যবাদ!_ 🤝";
+
+        $this->logMessage($mediation->id, 'STEP_1_DUAL', null, 'ai_mediator', $reply);
+
+        return [
+            'handled' => true,
+            'reply' => $reply,
+            'case_code' => $caseCode,
+            'step' => 'STEP_1_DUAL_FRIEND_OUTREACH',
+        ];
+    }
+
+    /**
+     * নতুন মধ্যস্থতা কেস শুরু করা (Step 1: একক বন্ধুর কথা মনোযোগ দিয়ে শোনা)
+     */
+    public function initiateNewMediation(string $partyAPhone, string $partyAName, string $text, ?string $prefilledFriendPhone = null): array
     {
         $caseCode = 'MED_' . strtoupper(substr(md5(uniqid()), 0, 6));
 
@@ -89,6 +243,8 @@ class FriendshipMediationService
             'party_a_id' => $partyAPhone,
             'party_a_phone' => $partyAPhone,
             'party_a_name' => $partyAName ?: 'বন্ধু ১',
+            'party_b_phone' => $prefilledFriendPhone,
+            'party_b_name' => $prefilledFriendPhone ? 'বন্ধু ২' : null,
             'party_a_statement' => $text,
             'attempts_count' => 0,
             'is_terminated' => false,
@@ -101,12 +257,21 @@ class FriendshipMediationService
 
         $this->logMessage($mediation->id, 'STEP_1', $partyAPhone, 'party_a', $text);
 
-        // AI সহানুভূতির সাথে কথা শুনবে এবং পরিস্থিতি শান্ত করার জন্য প্রশ্ন করবে
-        $reply = "🤝 আমি খুব মন দিয়ে তোমার কথা শুনছি {$partyAName}। বন্ধুদের মধ্যে এমন ভুল বোঝাবুঝি বা কষ্ট পাওয়া খুব স্বাভাবিক, শান্ত হও।\n\n"
-               . "১. ঠিক কী বিষয় নিয়ে ঝগড়া বা মনোমালিন্যটি শুরু হয়েছিল?\n"
-               . "২. বন্ধুর কোন কথা বা আচরণে তুমি সবচেয়ে বেশি কষ্ট পেয়েছো?\n"
-               . "৩. তুমি কি মন থেকে চাও এই ভুল বোঝাবুঝি মিটে যাক এবং বন্ধুত্ব আবার আগের মতো হোক?\n\n"
-               . "মন খুলে বলো, আমি কোনো পক্ষপাত ছাড়া সম্পূর্ণ নিরপেক্ষভাবে তোমাদের সাহায্য করতে প্রস্তুত।";
+        if ($prefilledFriendPhone) {
+            $fDisp = $this->formatDisplayPhone($prefilledFriendPhone);
+            $reply = "🤝 আমি খুব মন দিয়ে তোমার কথা শুনছি {$partyAName}। বন্ধুদের মধ্যে এমন ভুল বোঝাবুঝি বা কষ্ট পাওয়া খুব স্বাভাবিক, শান্ত হও।\n\n"
+                   . "তোমার বন্ধু ({$fDisp})-এর নম্বরটি আমি নথিভুক্ত করেছি। তবে তোমার স্পষ্ট সম্মতি ছাড়া ওনাকে কোনো বার্তা পাঠাব না।\n\n"
+                   . "১. ঠিক কী বিষয় নিয়ে ঝগড়া বা মনোমালিন্যটি শুরু হয়েছিল?\n"
+                   . "২. বন্ধুর কোন কথা বা আচরণে তুমি সবচেয়ে বেশি কষ্ট পেয়েছো?\n"
+                   . "৩. তুমি কি মন থেকে চাও এই ভুল বোঝাবুঝি মিটে যাক এবং বন্ধুত্ব আবার আগের মতো হোক?\n\n"
+                   . "মন খুলে বলো, আমি কোনো পক্ষপাত ছাড়া সম্পূর্ণ নিরপেক্ষভাবে তোমাদের সাহায্য করতে প্রস্তুত।";
+        } else {
+            $reply = "🤝 আমি খুব মন দিয়ে তোমার কথা শুনছি {$partyAName}। বন্ধুদের মধ্যে এমন ভুল বোঝাবুঝি বা কষ্ট পাওয়া খুব স্বাভাবিক, শান্ত হও।\n\n"
+                   . "১. ঠিক কী বিষয় নিয়ে ঝগড়া বা মনোমালিন্যটি শুরু হয়েছিল?\n"
+                   . "২. বন্ধুর কোন কথা বা আচরণে তুমি সবচেয়ে বেশি কষ্ট পেয়েছো?\n"
+                   . "৩. তুমি কি মন থেকে চাও এই ভুল বোঝাবুঝি মিটে যাক এবং বন্ধুত্ব আবার আগের মতো হোক?\n\n"
+                   . "মন খুলে বলো, আমি কোনো পক্ষপাত ছাড়া সম্পূর্ণ নিরপেক্ষভাবে তোমাদের সাহায্য করতে প্রস্তুত।";
+        }
 
         $this->logMessage($mediation->id, 'STEP_1', null, 'ai_mediator', $reply);
 
@@ -206,6 +371,54 @@ class FriendshipMediationService
         $clean = trim($text);
 
         switch ($med->status) {
+            case 'STEP_1_DUAL_FRIEND_OUTREACH':
+                // Party A (Friend 1) replied to the dual-friend outreach
+                $isRefusal = preg_match('/^(?:না|নো|no|stop)(?:[,।\s]|$)/iu', $clean)
+                          || preg_match('/(?:বিরক্ত\s*করবেন\s*না|কথা\s*বলব\s*না|কথা\s*বলতে\s*চাই\s*না|দরকার\s*নেই|leave\s*me\s*alone|চাই\s*না|যোগাযোগ\s*করবেন\s*না|মেসেজ\s*দিবেন\s*না)/iu', $clean);
+
+                if ($isRefusal) {
+                    $med->status = 'DECLINED_BY_FRIEND';
+                    $med->is_terminated = true;
+                    $med->closure_reason = 'FRIEND_1_DECLINED_COMMUNICATION';
+                    $med->save();
+
+                    $partyAReply = "আপনার সিদ্ধান্তকে আমি সম্পূর্ণ শ্রদ্ধা জানাচ্ছি। আপনাকে আর কোনো বার্তা বা যোগাযোগ করা হবে না। আপনার সুন্দর ও শান্তিময় জীবন কামনা করি। ভালো থাকবেন। 🌸";
+                    $this->whatsapp->sendMessage($senderPhone, $partyAReply);
+
+                    if ($med->initiator_phone) {
+                        $this->whatsapp->sendMessage($med->initiator_phone, "ℹ️ আপনার বন্ধু (" . $this->formatDisplayPhone($med->party_a_phone) . ") কথা বলতে অনিচ্ছুক। ওনার সিদ্ধান্তকে সম্মান জানিয়ে মধ্যস্থতা বন্ধ করা হয়েছে।");
+                    }
+
+                    return ['handled' => true, 'reply' => $partyAReply, 'step' => 'DECLINED_BY_FRIEND'];
+                }
+
+                $med->party_a_statement = $clean;
+                $med->party_a_consent_contact = true;
+                $med->save();
+
+                // Check if Party B (Friend 2) has also shared their statement
+                if ($med->party_b_consent_chat && !empty($med->party_b_statement)) {
+                    $this->performDualPerspectiveAnalysis($med);
+                    $med->status = 'STEP_5_ANALYZING_VIABILITY';
+                    $med->save();
+
+                    $groupProposal = "🌸 আপনার কথাগুলো আমি গভীর মনোযোগ দিয়ে শুনেছি।\n\n"
+                                   . "আমি আপনাদের দুজনের বক্তব্য নিরপেক্ষভাবে বিশ্লেষণ করে দেখেছি যে মূলত কিছু ভুল বোঝাবুঝির কারণে এই দূরত্বের সৃষ্টি হয়েছে।\n\n"
+                                   . "🤝 *পুনর্মিলনের সম্ভাবনা:* আপনারা দুজনেই যদি শান্ত আলোচনার সুযোগ দেন, তবে একটি নিরাপদ WhatsApp গ্রুপে ভুল বোঝাবুঝি দূর করা সম্ভব।\n\n"
+                                   . "আপনি কি গ্রুপে শান্ত ও সৌহার্দ্যপূর্ণ আলোচনা করতে প্রস্তুত? প্রস্তুত থাকলে লিখুন: `হ্যাঁ রাজি`।";
+
+                    $this->whatsapp->sendMessage($med->party_b_phone, $groupProposal);
+
+                    $this->logMessage($med->id, 'STEP_5', null, 'ai_mediator', $groupProposal);
+                    return ['handled' => true, 'reply' => $groupProposal, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
+                } else {
+                    $f2Disp = $this->formatDisplayPhone($med->party_b_phone);
+                    $waitReply = "🤝 ধন্যবাদ আপনার অনুভূতিগুলো শেয়ার করার জন্য। আমি খুব গভীর মনোযোগ দিয়ে আপনার কথাগুলো বুঝেছি।\n\n"
+                               . "আমি আপনার অপর বন্ধু ({$f2Disp})-এর উত্তরের অপেক্ষায় আছি। ওনার বক্তব্য পাওয়ার পর আমি দুজনকেই পরবর্তী পদক্ষেপ জানাব। শান্ত হয়ে একটু অপেক্ষা করুন। 🕊️";
+                    $this->logMessage($med->id, 'STEP_1_DUAL', null, 'ai_mediator', $waitReply);
+                    return ['handled' => true, 'reply' => $waitReply, 'step' => 'STEP_1_DUAL_FRIEND_OUTREACH'];
+                }
+
             case 'STEP_1_LISTENING_PARTY_A':
                 // Party A পরিস্থিতি বুঝিয়ে বলল, এবার বন্ধুর নম্বর ও সম্মতি চাওয়ার ধাপ (Step 2)
                 $med->party_a_statement .= "\n• " . $clean;
@@ -372,6 +585,36 @@ class FriendshipMediationService
             $this->whatsapp->sendMessage($med->party_a_phone, $partyANotice);
 
             return ['handled' => true, 'reply' => $partyBReply, 'step' => 'DECLINED_BY_FRIEND'];
+        }
+
+        // Step 1 Dual: Party B (Friend 2) responded to the dual-friend outreach!
+        if ($med->status === 'STEP_1_DUAL_FRIEND_OUTREACH') {
+            $med->party_b_statement = $clean;
+            $med->party_b_consent_chat = true;
+            $med->save();
+
+            // Check if Party A (Friend 1) has also shared their statement
+            if ($med->party_a_consent_contact && !empty($med->party_a_statement)) {
+                $this->performDualPerspectiveAnalysis($med);
+                $med->status = 'STEP_5_ANALYZING_VIABILITY';
+                $med->save();
+
+                $groupProposal = "🌸 আপনার কথাগুলো আমি গভীর মনোযোগ দিয়ে শুনেছি।\n\n"
+                               . "আমি আপনাদের দুজনের বক্তব্য নিরপেক্ষভাবে বিশ্লেষণ করে দেখেছি যে মূলত কিছু ভুল বোঝাবুঝির কারণে এই দূরত্বের সৃষ্টি হয়েছে।\n\n"
+                               . "🤝 *পুনর্মিলনের সম্ভাবনা:* আপনারা দুজনেই যদি শান্ত আলোচনার সুযোগ দেন, তবে একটি নিরাপদ WhatsApp গ্রুপে ভুল বোঝাবুঝি দূর করা সম্ভব।\n\n"
+                               . "আপনি কি গ্রুপে শান্ত ও সৌহার্দ্যপূর্ণ আলোচনা করতে প্রস্তুত? প্রস্তুত থাকলে লিখুন: `হ্যাঁ রাজি`।";
+
+                $this->whatsapp->sendMessage($med->party_a_phone, $groupProposal);
+
+                $this->logMessage($med->id, 'STEP_5', null, 'ai_mediator', $groupProposal);
+                return ['handled' => true, 'reply' => $groupProposal, 'step' => 'STEP_5_ANALYZING_VIABILITY'];
+            } else {
+                $f1Disp = $this->formatDisplayPhone($med->party_a_phone);
+                $waitReply = "🤝 ধন্যবাদ আপনার অনুভূতিগুলো শেয়ার করার জন্য। আমি খুব গভীর মনোযোগ দিয়ে আপনার কথাগুলো বুঝেছি।\n\n"
+                           . "আমি আপনার অপর বন্ধু ({$f1Disp})-এর উত্তরের অপেক্ষায় আছি। ওনার বক্তব্য পাওয়ার পর আমি দুজনকেই পরবর্তী পদক্ষেপ জানাব। শান্ত হয়ে একটু অপেক্ষা করুন। 🕊️";
+                $this->logMessage($med->id, 'STEP_1_DUAL', null, 'ai_mediator', $waitReply);
+                return ['handled' => true, 'reply' => $waitReply, 'step' => 'STEP_1_DUAL_FRIEND_OUTREACH'];
+            }
         }
 
         // Step 3: Party B সাড়া দিল এবং কথা বলতে রাজি হলো
@@ -688,18 +931,21 @@ class FriendshipMediationService
      */
     public function isReactivationIntent(string $text): bool
     {
+        $phones = $this->extractAllPhoneNumbers($text);
+        if (count($phones) >= 2) {
+            return false;
+        }
+
         $t = mb_strtolower($text, 'UTF-8');
         
         $reconcileActions = '(?:মিলতে|মিটমাট|কথা\s*বলতে|সম্পর্ক\s*ঠিক|বন্ধুত্ব\s*ঠিক|পুনর্মিলন|ভুল\s*বোঝাবুঝি\s*মিটাতে|এক\s*হতে|আগের\s*মতো\s*হতে|সমঝোতা|মিলে\s*যেতে|মিটিয়ে\s*নিতে|মিল\s*হতে)';
         $intentMarkers = '(?:চাই|চাচ্ছি|ইচ্ছা|আগ্রহী|ভাবছি|পারব|হবে|করব|করতে\s*চাই|চেষ্টা\s*করতে\s*চাই)';
         $againWords = '(?:আবার|নতুন\s*করে|পুনরায়|পুনরায়|আরেকবার|দ্বিতীয়বার|দ্বিতীয়\s*সুযোগ|আরেকটা\s*চান্স)';
 
-        return (bool) preg_match("/{$reconcileActions}.*?{$intentMarkers}/iu", $t)
-            || (bool) preg_match("/{$againWords}.*?{$reconcileActions}/iu", $t)
+        return (bool) preg_match("/{$againWords}.*?{$reconcileActions}/iu", $t)
+            || (bool) preg_match("/{$reconcileActions}.*?{$againWords}/iu", $t)
             || (bool) preg_match("/{$againWords}.*?(?:বন্ধু|দোস্ত|ফ্রেন্ড|ওর).*?(?:কথা|মিল|সম্পর্ক)/iu", $t)
-            || (bool) preg_match('/(?:সম্পর্ক|বন্ধুত্ব|দোস্তি)\s*(?:ঠিক|ভালো|স্বাভাবিক)\s*কর/iu', $t)
-            || (bool) preg_match('/(?:কথা\s*বলিয়ে|মিলিয়ে|মিটিয়ে)\s*(?:দাও|দিন|দেবা)/iu', $t)
-            || (bool) preg_match('/(?:আবার\s*বন্ধুত্ব|পুনরায়\s*সক্রিয়|পুনরায়\s*সক্রিয়|reactivate|restart\s*mediation|reconcile)/iu', $t);
+            || (bool) preg_match('/(?:আবার\s*বন্ধুত্ব|পুনরায়\s*সক্রিয়|পুনরায়\s*সক্রিয়|reactivate|restart\s*mediation)/iu', $t);
     }
 
     /**
@@ -719,14 +965,45 @@ class FriendshipMediationService
     }
 
     /**
-     * ফোন নম্বর নিষ্কাশন
+     * বার্তা থেকে সমস্ত বাংলাদেশী মোবাইল ফোন নম্বর নিষ্কাশন
+     */
+    public function extractAllPhoneNumbers(string $text): array
+    {
+        preg_match_all('/(?:\+?88)?(01[3-9]\d{8})/u', $text, $matches);
+        if (empty($matches[1])) {
+            return [];
+        }
+
+        $phones = [];
+        foreach ($matches[1] as $num) {
+            $full = '88' . $num;
+            if (!in_array($full, $phones)) {
+                $phones[] = $full;
+            }
+        }
+        return $phones;
+    }
+
+    /**
+     * ফোন নম্বর নিষ্কাশন (প্রথম নম্বর)
      */
     protected function extractPhoneNumber(string $text): ?string
     {
-        if (preg_match('/(?:\+?88)?(01[3-9]\d{8})/u', $text, $m)) {
-            return '88' . $m[1];
+        $all = $this->extractAllPhoneNumbers($text);
+        return $all[0] ?? null;
+    }
+
+    /**
+     * ব্যবহারকারীর দেখার জন্য ফোন নম্বর সুন্দর ফরম্যাটে প্রদর্শন
+     */
+    public function formatDisplayPhone(?string $phone): string
+    {
+        if (!$phone) return '';
+        $digits = preg_replace('/\D/', '', $phone);
+        if (str_starts_with($digits, '8801') && strlen($digits) === 13) {
+            return '0' . substr($digits, 2);
         }
-        return null;
+        return $phone;
     }
 
     /**
@@ -735,6 +1012,8 @@ class FriendshipMediationService
     public function getHumanStageName(string $status): string
     {
         $stages = [
+            'STEP_1_DUAL_FRIEND_OUTREACH' => 'উভয় বন্ধুর সাথে পৃথক নিরপেক্ষ যোগাযোগ ও অনুভূতি গ্রহণ',
+            'NEED_DUAL_FRIEND_NUMBERS' => 'উভয় বন্ধুর নম্বর গ্রহণের অপেক্ষা',
             'STEP_1_LISTENING_PARTY_A' => 'প্রথম বন্ধুর বক্তব্য গ্রহণ ও সান্ত্বনা',
             'STEP_2_REQUEST_FRIEND_CONTACT' => 'বন্ধুর নম্বর ও সম্মতি গ্রহণ',
             'STEP_3_CONTACT_PARTY_B' => 'বন্ধুর সাথে ব্যক্তিগত ও নিরপেক্ষ যোগাযোগ',

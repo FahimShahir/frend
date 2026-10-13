@@ -54,9 +54,10 @@ async function setQrCode(qr) {
   }
 }
 
-function setBotClient(client, onRestart) {
+function setBotClient(client, onRestart, sendReplyFn) {
   botState.clientRef = client;
   if (onRestart) botState.onRestartRequest = onRestart;
+  if (sendReplyFn) botState.sendReplyFn = sendReplyFn;
 }
 
 function getBotState() {
@@ -2992,10 +2993,27 @@ function startWebDashboardServer(port = 3000) {
           }
           let target = String(data.to).trim();
           if (!target.endsWith('@lid') && !target.endsWith('@g.us') && !target.endsWith('@c.us')) {
-            target = target.replace(/\D/g, '');
-            if (target) target = `${target}@c.us`;
+            let digits = target.replace(/\D/g, '');
+            if (digits.startsWith('01') && digits.length === 11) {
+              digits = '88' + digits;
+            } else if (digits.startsWith('+88')) {
+              digits = digits.replace(/^\+/, '');
+            }
+            if (digits) target = `${digits}@c.us`;
+          } else if (target.endsWith('@c.us')) {
+            let userPart = target.split('@')[0];
+            let digits = userPart.replace(/\D/g, '');
+            if (digits.startsWith('01') && digits.length === 11) {
+              target = `88${digits}@c.us`;
+            }
           }
-          await botState.clientRef.sendMessage(target, data.message);
+
+          if (typeof botState.sendReplyFn === 'function') {
+            await botState.sendReplyFn(target, data.message);
+          } else {
+            const BOT_SIGNATURE = '\u200B\u200C\u200D\uFEFF';
+            await botState.clientRef.sendMessage(target, BOT_SIGNATURE + data.message);
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, message: 'WhatsApp বার্তা সফলভাবে পাঠানো হয়েছে।' }));
           return;

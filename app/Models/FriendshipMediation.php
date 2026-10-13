@@ -40,6 +40,8 @@ class FriendshipMediation extends Model
     protected $fillable = [
         'case_code',
         'status',
+        'initiator_phone',
+        'initiator_name',
         'party_a_id',
         'party_a_phone',
         'party_a_name',
@@ -91,9 +93,12 @@ class FriendshipMediation extends Model
                     $q->where('group_id', $phoneOrGroup);
                 } else {
                     $q->where('party_a_phone', $phoneOrGroup)
-                      ->orWhere('party_a_phone', 'LIKE', "%{$cleanPhone}%")
-                      ->orWhere('party_b_phone', $phoneOrGroup)
-                      ->orWhere('party_b_phone', 'LIKE', "%{$cleanPhone}%");
+                      ->orWhere('party_b_phone', $phoneOrGroup);
+                    
+                    if (strlen($cleanPhone) >= 9) {
+                        $q->orWhere('party_a_phone', 'LIKE', "%{$cleanPhone}%")
+                          ->orWhere('party_b_phone', 'LIKE', "%{$cleanPhone}%");
+                    }
                 }
             })
             ->latest()
@@ -110,9 +115,12 @@ class FriendshipMediation extends Model
         return self::where('is_terminated', true)
             ->where(function ($q) use ($phone, $cleanPhone) {
                 $q->where('party_a_phone', $phone)
-                  ->orWhere('party_a_phone', 'LIKE', "%{$cleanPhone}%")
-                  ->orWhere('party_b_phone', $phone)
-                  ->orWhere('party_b_phone', 'LIKE', "%{$cleanPhone}%");
+                  ->orWhere('party_b_phone', $phone);
+
+                if (strlen($cleanPhone) >= 9) {
+                    $q->orWhere('party_a_phone', 'LIKE', "%{$cleanPhone}%")
+                      ->orWhere('party_b_phone', 'LIKE', "%{$cleanPhone}%");
+                }
             })
             ->latest()
             ->first();

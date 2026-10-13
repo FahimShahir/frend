@@ -141,51 +141,15 @@ class HumanEmotionalCompanionService
         if (preg_match('/(?:ঝগ[ড়ড]া|ঝামেলা|মনোমালিন্য|রাগারাগি|ভুল\s*বোঝাবুঝি|fight|breakup|kotha\s*bondho).+(?:মিট[ািীে]+|মিটমাট|সমাধান|মিল[ািীে]+|গ্রুপ|কথা\s*বলা|মানাও)/ius', $text)
             || preg_match('/^(?:মিট[ািীে]+\s*দাও|মিল[ািীে]+\s*দাও|মিটমাট\s*কর[ো]?|গ্রুপ\s*খুলো|গ্রুপ\s*খুলে\s*দাও)[:\s]*(.*)$/ius', $text)) {
             
-            // ফোন নম্বর খোঁজ
-            $phone = $this->extractPhoneNumber($text);
-
-            if ($phone) {
-                $caseCode = 'MED_' . strtoupper(substr(md5(uniqid()), 0, 6));
-
-                // শান্তির সুবাতাস নিয়ে অপর পক্ষকে ডিপ্লোম্যাটিক বার্তা পাঠানো
-                $peacemakerMsg = "🌸 *আসসালামু আলাইকুম!*\n\n"
-                               . "আমি *{$userName}*-এর পক্ষ থেকে অত্যন্ত আন্তরিকতা ও শ্রদ্ধার সাথে লিখছি।\n\n"
-                               . "{$userName} আপনাদের মধ্যকার ভুল বোঝাবুঝি নিয়ে মানসিকভাবে ভীষণ ব্যথিত এবং ও আপনাকে অনেক মূল্য দেয়। ও সরাসরি বলতে দ্বিধাবোধ করছে, কিন্তু মন থেকে চায় আপনারা আবার আগের মতো শান্ত হয়ে কথা বলে সব ভুল বোঝাবুঝি দূর করে ফেলুন।\n\n"
-                               . "রাগ বা অভিমান সাময়িক, কিন্তু সম্পর্ক অনেক মূল্যবান। অনুগ্রহ করে ওকে একটু সময় দিয়ে কথা বলুন। ধন্যবাদ! 🤝❤️";
-
-                $this->whatsapp->sendMessage($phone, $peacemakerMsg);
-
-                // গ্রুপ তৈরির চেষ্টা (যদি সম্ভব হয়)
-                $groupRes = $this->whatsapp->createGroup("শান্তি ও আলোচনা 🤝 ({$userName})", [$phone]);
-                $groupLink = $groupRes['inviteLink'] ?? null;
-
-                MediationCase::create([
-                    'case_code' => $caseCode,
-                    'initiator_user_id' => $userId,
-                    'target_phone' => $phone,
-                    'target_name' => 'প্রিয়জন/বন্ধু',
-                    'conflict_reason' => $text,
-                    'status' => 'IN_PROGRESS',
-                    'group_invite_link' => $groupLink,
-                    'mediation_notes' => 'মধ্যস্থতা বার্তা সফলভাবে পাঠানো হয়েছে।',
-                    'last_message_at' => now(),
-                ]);
-
-                $reply = "🤝 শান্ত হও {$userName}, মন খারাপ করো না একদম!\n\n"
-                       . "আমি ওনার নম্বরে ({$phone}) অত্যন্ত মিষ্টি, মানবিক ও সম্মানজনক একটি সমঝোতার বার্তা পাঠিয়ে দিয়েছি যাতে ওনার রাগ গলে যায়।\n\n";
-
-                if ($groupLink) {
-                    $reply .= "👥 এছাড়াও তোমাদের দুজনের কথা বলার জন্য একটি প্রাইভেট গ্রুপ খুলেছি:\n🔗 {$groupLink}\n\n";
-                }
-
-                $reply .= "ইনশাআল্লাহ সব ঝামেলা মিটে যাবে। আমি দুজনের মাঝখানে সুন্দর মিল করিয়ে দেওয়ার সার্বক্ষণিক চেষ্টা করছি! ❤️";
-
-                return ['handled' => true, 'reply' => $reply, 'type' => 'mediation_active'];
-            } else {
+            /** @var FriendshipMediationService $mediationService */
+            $mediationService = app(FriendshipMediationService::class);
+            $res = $mediationService->handleMediationMessage($userId, $userName, $text);
+            if ($res && !empty($res['handled'])) {
                 return [
                     'handled' => true,
-                    'reply' => "কষ্ট পেও না বন্ধু... কার সাথে ঝামেলা হয়েছে? ওনার WhatsApp নম্বরটি আমাকে দাও (যেমন: `017xxxxxxxx এর সাথে ঝামেলা হয়েছে, মিটিয়ে দাও`)।\n\nআমি এমন সুন্দর ও মিষ্টি ভাষায় ওনাকে মেসেজ দিয়ে গ্রুপে আনবো যেন ওনার সব রাগ মুহূর্তেই গলে যায়! 🤝❤️",
-                    'type' => 'need_mediation_phone'
+                    'reply' => $res['reply'],
+                    'type' => 'friendship_mediation',
+                    'step' => $res['step'] ?? null,
                 ];
             }
         }

@@ -173,7 +173,17 @@ function normalizeChatJid(jid) {
   if (cleanDigits.startsWith('11') && cleanDigits.length >= 14 && cleanDigits.length <= 16) {
     return `${cleanDigits}@lid`;
   }
+  // Bangladeshi 11-digit mobile numbers starting with 01
+  if (cleanDigits.startsWith('01') && cleanDigits.length === 11) {
+    return `88${cleanDigits}@c.us`;
+  }
   if (cleanDevice.endsWith('@lid') || cleanDevice.endsWith('@c.us')) {
+    if (cleanDevice.endsWith('@c.us')) {
+      const uDigits = cleanDevice.split('@')[0].replace(/\D/g, '');
+      if (uDigits.startsWith('01') && uDigits.length === 11) {
+        return `88${uDigits}@c.us`;
+      }
+    }
     return cleanDevice;
   }
   return cleanDigits ? `${cleanDigits}@c.us` : cleanDevice;
@@ -231,6 +241,14 @@ const BOT_TEMPLATE_PREFIXES = [
   '🎤 [ভয়েস]:',
   '🎤 _শুনলাম:',
   '📍 *লোকেশন রিমাইন্ডার',
+  '🌸 *আসসালামু আলাইকুম',
+  '🕊️ *',
+  '🤝 *',
+  'আমি *FREND*',
+  '✅ তোমার সম্মতিক্রমে',
+  'আমি তোমার বক্তব্যটি নথিভুক্ত করেছি',
+  '🔒 *যোগাযোগের অনুমতি',
+  'বট গেটওয়ে',
 ];
 
 function isBotMessage(msg) {
@@ -263,8 +281,8 @@ function isBotMessage(msg) {
     }
   }
 
-  // 5. Echo shield: if fromMe is true and arrived within 1.5s of bot sending
-  if (msg.fromMe && (Date.now() - lastBotSendTimestamp < 1500)) {
+  // 5. Echo shield: if fromMe is true and arrived within 2.5s of bot sending
+  if (msg.fromMe && (Date.now() - lastBotSendTimestamp < 2500)) {
     return true;
   }
 
@@ -383,15 +401,6 @@ async function sendBotReply(targetOrMsg, text) {
           }
         } catch (chatLookupErr) {
           console.warn(`[sendBotReply] Chat lookup fallback error:`, chatLookupErr.message);
-        }
-
-        if (!sent) {
-          const ownerJid = `${getOwnerPhone()}@c.us`;
-          if (targetJid !== ownerJid) {
-            try {
-              sent = await client.sendMessage(ownerJid, replyPayload);
-            } catch (_) {}
-          }
         }
       }
     }
@@ -1220,7 +1229,7 @@ webDashboard.setBotClient(client, async () => {
       isReconnecting = false;
     }
   }, 2000);
-});
+}, sendBotReply);
 
 // Start autonomous background reminder worker immediately on boot
 startReminderScheduler();
